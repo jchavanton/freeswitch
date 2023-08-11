@@ -1082,6 +1082,8 @@ static inline switch_status_t jb_next_packet(switch_jb_t *jb, switch_jb_node_t *
 
 	if (jb->elastic && jb->jitter.estimate) {
 		return jb_next_packet_by_seq_with_acceleration(jb, nodep);
+	} else if (jb->jitter.estimate && (jb->visible_nodes * jb->jitter.samples_per_frame) > 0 && jb->jitter.samples_per_second) {
+		check_jb_size(jb);
 	}
 
 	return jb_next_packet_by_seq(jb, nodep);
