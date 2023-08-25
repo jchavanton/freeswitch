@@ -799,6 +799,13 @@ static void *audio_bridge_thread(switch_thread_t *thread, void *obj)
 		status = switch_core_session_read_frame(session_a, &read_frame, SWITCH_IO_FLAG_NONE, stream_id);
 
 		if (SWITCH_READ_ACCEPTABLE(status)) {
+		//        switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session_a), SWITCH_LOG_CRIT, ">>>> ivr_bridge - switch_core_session_read_frame ssrc[0x%08X]seq[%u]ts[%u]codec[%s]ts[%u] 1t1 <<<<\n",
+		//			read_frame->ssrc,
+		//			read_frame->seq,
+		//			read_frame->timestamp,
+		//			read_frame->codec->implementation->iananame,
+		//			(unsigned int)(read_frame->extra.received_ts/1000)
+		//			);
 			read_frame_count++;
 			if (switch_test_flag(read_frame, SFF_CNG)) {
 				if (silence_val) {

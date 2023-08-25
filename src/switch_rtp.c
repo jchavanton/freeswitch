@@ -113,6 +113,7 @@ typedef struct {
 	char body[SWITCH_RTP_MAX_BUF_LEN+4+sizeof(char *)];
 	switch_rtp_hdr_ext_t *ext;
 	char *ebody;
+	switch_time_t received_ts;
 } rtp_msg_t;
 
 #define RTP_BODY(_s) (char *) (_s->recv_msg.ebody ? _s->recv_msg.ebody : _s->recv_msg.body)
@@ -5719,6 +5720,11 @@ static switch_status_t read_rtp_packet(switch_rtp_t *rtp_session, switch_size_t 
 
 	if (poll_status == SWITCH_STATUS_SUCCESS) {
 		status = switch_socket_recvfrom(rtp_session->from_addr, rtp_session->sock_input, 0, (void *) &rtp_session->recv_msg, bytes);
+		if (*bytes) {
+			rtp_session->recv_msg.received_ts = switch_micro_time_now();
+			// switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(rtp_session->session), SWITCH_LOG_CRIT, "switch_socket_recvfrom: ts[%u] seq[%u]\n",
+			//	 (unsigned int)(rtp_session->recv_msg.received_ts/1000), ntohs((uint16_t)rtp_session->recv_msg.header.seq));
+		}
 	} else {
 		*bytes = 0;
 	}
@@ -6358,6 +6364,64 @@ static switch_status_t read_rtp_packet(switch_rtp_t *rtp_session, switch_size_t 
 		}
 	}
 
+		{ // packet transmission reporting
+		switch_channel_t *channel = switch_core_session_get_channel(rtp_session->session);
+		const char *uuid=NULL;
+		switch_core_session_t *b_session=NULL;
+		switch_rtp_t *b_rtp_session=NULL;
+		switch_channel_t *b_channel=NULL;
+		if (channel) {
+			uuid = switch_channel_get_variable(channel,"bridge_uuid");
+		}
+		if (uuid) {
+			b_session = switch_core_session_locate(uuid);
+		}
+		if (b_session) {
+			b_rtp_session = switch_core_media_get_rtp_session(b_session, SWITCH_MEDIA_TYPE_AUDIO);
+			b_channel = switch_core_session_get_channel(b_session);
+		}
+
+		if (b_rtp_session) {
+			packet_stats_io_info_t packet_stats_io_info;
+
+			if (!(*flags & SFF_PLC)) {
+				if (*bytes) {
+					switch_core_session_increment_read(b_rtp_session->session);
+				}
+			} else {
+				switch_core_session_increment_plc(b_rtp_session->session);
+			}
+
+			packet_stats_io_info.out_callid = switch_channel_get_variable(b_channel, "sip_call_id");
+			packet_stats_io_info.in_callid = switch_channel_get_variable(channel, "sip_call_id");
+			packet_stats_io_info.out_ssrc = b_rtp_session->ssrc;
+			packet_stats_io_info.out_codec = '\0';
+			packet_stats_io_info.out_remote_addr = b_rtp_session->remote_addr;
+			packet_stats_io_info.out_local_addr = b_rtp_session->local_addr;
+
+			packet_stats_io_info.in_ssrc = rtp_session->remote_ssrc;
+			packet_stats_io_info.in_codec = '\0';
+			packet_stats_io_info.in_remote_addr = rtp_session->remote_addr;
+			packet_stats_io_info.in_local_addr = rtp_session->local_addr;
+
+			switch_core_session_set_io_stats(b_rtp_session->session, &packet_stats_io_info);
+
+			// switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(rtp_session->session), SWITCH_LOG_WARNING,
+			// 	"READ_RTP_PACKET: [%d]received[%u][ssrc:0x%08X][x%u][%u]-RTP->[%u]fs[%u]>RTP>[%u][ssrc:0x%08X]plc[%u]\n",
+			// 	(int)*bytes,
+			// 	(unsigned int)(rtp_session->recv_msg.received_ts/1000),
+			// 	rtp_session->remote_ssrc,
+			// 	rtp_session->rtp_data.in,
+			// 	rtp_session->remote_addr->port,
+			// 	rtp_session->local_addr->port,
+			// 	b_rtp_session->local_addr->port,
+			// 	b_rtp_session->remote_addr->port,
+			// 	b_rtp_session->ssrc,
+			// 	(*flags & SFF_PLC)	
+			// 	);
+		}
+
+		} // packet transmission reporting
 	return status;
 }
 
@@ -7891,7 +7955,13 @@ SWITCH_DECLARE(switch_status_t) switch_rtp_zerocopy_read_frame(switch_rtp_t *rtp
 			switch_set_flag(frame, SFF_RFC2833);
 		}
 		frame->timestamp = ntohl(rtp_session->last_rtp_hdr.ts);
+
+		frame->extra.received_ts = rtp_session->recv_msg.received_ts;
 		frame->seq = (uint16_t) ntohs((uint16_t) rtp_session->last_rtp_hdr.seq);
+		// switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(rtp_session->session), SWITCH_LOG_CRIT, "switch_zero_copy: ts[%u] seq[%u] now[%u] elapsed[%u]\n",
+		//	(unsigned int)(frame->extra.received_ts/1000), frame->seq,
+		//	(unsigned int)(switch_micro_time_now()/1000), 
+		//	(unsigned int)(switch_micro_time_now()/1000) - (unsigned int)(frame->extra.received_ts/1000));
 		frame->ssrc = ntohl(rtp_session->last_rtp_hdr.ssrc);
 		frame->m = rtp_session->last_rtp_hdr.m ? SWITCH_TRUE : SWITCH_FALSE;
 	}
@@ -7978,12 +8048,16 @@ static int rtp_common_write(switch_rtp_t *rtp_session,
 	}
 
 	WRITE_INC(rtp_session);
-	
+
 	if (rtp_session->flags[SWITCH_RTP_FLAG_USE_TIMER]) {
 		//switch_core_timer_sync(&rtp_session->write_timer);
 	}
 
 	if (send_msg) {
+		// switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(rtp_session->session), SWITCH_LOG_WARNING,
+		// 		"RTP_COMMON_WRITE [%u] [%u] timer[%d] count[%d]\n",
+		// 		send_msg->header.ssrc, ((unsigned int)switch_micro_time_now())/1000,
+		// 		rtp_session->flags[SWITCH_RTP_FLAG_USE_TIMER], rtp_session->stats.read_count);
 		bytes = datalen;
 
 		m = (uint8_t) send_msg->header.m;
@@ -8298,7 +8372,7 @@ static int rtp_common_write(switch_rtp_t *rtp_session,
 		rtp_session->seq += delta;
 
 		send_msg->header.seq = htons(rtp_session->seq);
-		
+
 		if (rtp_session->flags[SWITCH_RTP_FLAG_BYTESWAP] && send_msg->header.pt == rtp_session->payload) {
 			switch_swap_linear((int16_t *)send_msg->body, (int) datalen);
 		}
@@ -8422,7 +8496,7 @@ static int rtp_common_write(switch_rtp_t *rtp_session,
 		//
 		//	rtp_session->flags[SWITCH_RTP_FLAG_DEBUG_RTP_READ]++;
 		//
-		//	//switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "SEND %u\n", ntohs(send_msg->header.seq));
+		//      //switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "SEND %u\n", ntohs(send_msg->header.seq));
 		//}
 		if (switch_socket_sendto(rtp_session->sock_output, rtp_session->remote_addr, 0, (void *) send_msg, &bytes) != SWITCH_STATUS_SUCCESS) {
 			rtp_session->seq -= delta;
@@ -8726,6 +8800,22 @@ SWITCH_DECLARE(int) switch_rtp_write_frame(switch_rtp_t *rtp_session, switch_fra
 	*/
 
 	r = rtp_common_write(rtp_session, send_msg, data, len, payload, ts, &frame->flags);
+
+	// if (rtp_session) {
+	// 		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(rtp_session->session), SWITCH_LOG_CRIT, 
+	// 			"switch_rtp_write_frame: len[%d] ssrc[0x%08X]seq[%u]ts[%u]codec[%s] >> ssrc[0x%08X]seq[%u]ts[%u]codec[%s] received[%u]now[%u]\n",
+	// 		        len, frame->ssrc,
+	// 			frame->seq,
+	// 			frame->timestamp,
+	// 			frame->codec->implementation->iananame,
+	// 		        rtp_session->ssrc,
+	// 			ntohs((uint16_t)rtp_session->send_msg.header.seq),
+	// 			ts,
+	// 			frame->codec->implementation->iananame,
+	// 			(unsigned int)(frame->extra.received_ts/1000),
+	// 			(unsigned int)(switch_micro_time_now()/1000)
+	// 		);
+	// }
 
 	if (send_msg) {
 		send_msg->header = local_header;
