@@ -50,6 +50,10 @@ typedef struct switch_frame_geometry {
 	int32_t X;
 } switch_frame_geometry_t;
 
+typedef struct switch_frame_extra {
+	switch_time_t received_ts;
+} switch_frame_extra_t;
+
 /*! \brief An abstraction of a data frame */
 	struct switch_frame {
 	/*! a pointer to the codec information */
@@ -87,6 +91,7 @@ typedef struct switch_frame_geometry {
 	payload_map_t *pmap;
 	switch_image_t *img;
 	struct switch_frame_geometry geometry;
+	switch_frame_extra_t extra;
 };
 
 SWITCH_END_EXTERN_C
