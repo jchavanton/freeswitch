@@ -74,7 +74,6 @@ SWITCH_DECLARE(switch_status_t) switch_core_session_read_frame(switch_core_sessi
 	unsigned int flag = 0;
 	int i;
 
-	// switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_WARNING, ">>> switch_core_session_read_frame <<<\n");
 	switch_assert(session != NULL);
 
 	tap_only = switch_test_flag(session, SSF_MEDIA_BUG_TAP_ONLY);
@@ -101,7 +100,6 @@ SWITCH_DECLARE(switch_status_t) switch_core_session_read_frame(switch_core_sessi
 		if (switch_channel_test_flag(session->channel, CF_AUDIO_PAUSE_READ)) {
 			switch_yield(20000);
 			*frame = &runtime.dummy_cng_frame;
-			// switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "Media Paused!!!!\n");
 			return SWITCH_STATUS_SUCCESS;
 		}
 

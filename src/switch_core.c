@@ -128,8 +128,6 @@ static void send_heartbeat(void)
 static char main_ip4[256] = "";
 static char main_ip6[256] = "";
 
-
-
 static void check_ip(void)
 {
 	char guess_ip4[256] = "";

@@ -571,15 +571,12 @@ static void *audio_bridge_thread(switch_thread_t *thread, void *obj)
 
 		switch_ivr_parse_all_messages(session_a);
 
-
 		if (!inner_bridge && (switch_channel_test_flag(chan_a, CF_SUSPEND) || switch_channel_test_flag(chan_b, CF_SUSPEND))) {
-
 			status = switch_core_session_read_frame(session_a, &read_frame, SWITCH_IO_FLAG_NONE, stream_id);
 
 			if (!SWITCH_READ_ACCEPTABLE(status)) {
 				goto end_of_bridge_loop;
 			}
-//		        switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session_a), SWITCH_LOG_CRIT, ">>>> ivr_bridge - switch_core_session_read_frame ssrc[0x%08X] <<<<\n", read_frame->ssrc);
 			continue;
 		}
 
@@ -798,18 +795,17 @@ static void *audio_bridge_thread(switch_thread_t *thread, void *obj)
 		}
 
 
-
 		/* read audio from 1 channel and write it to the other */
 		status = switch_core_session_read_frame(session_a, &read_frame, SWITCH_IO_FLAG_NONE, stream_id);
 
 		if (SWITCH_READ_ACCEPTABLE(status)) {
-		        switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session_a), SWITCH_LOG_CRIT, ">>>> ivr_bridge - switch_core_session_read_frame ssrc[0x%08X]seq[%u]ts[%u]codec[%s]ts[%u] 1t1 <<<<\n",
-					read_frame->ssrc,
-					read_frame->seq,
-					read_frame->timestamp,
-					read_frame->codec->implementation->iananame,
-					(unsigned int)(read_frame->extra.received_ts/1000)
-					);
+		//        switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session_a), SWITCH_LOG_CRIT, ">>>> ivr_bridge - switch_core_session_read_frame ssrc[0x%08X]seq[%u]ts[%u]codec[%s]ts[%u] 1t1 <<<<\n",
+		//			read_frame->ssrc,
+		//			read_frame->seq,
+		//			read_frame->timestamp,
+		//			read_frame->codec->implementation->iananame,
+		//			(unsigned int)(read_frame->extra.received_ts/1000)
+		//			);
 			read_frame_count++;
 			if (switch_test_flag(read_frame, SFF_CNG)) {
 				if (silence_val) {
@@ -1432,8 +1428,6 @@ static switch_status_t signal_bridge_on_hangup(switch_core_session_t *session)
 	switch_channel_t *channel = switch_core_session_get_channel(session);
 	switch_core_session_t *other_session;
 	switch_event_t *event;
-
-	switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_WARNING, ">>>> signal_bridge_on_hangup  <<<<");
 
 	if ((uuid = switch_channel_get_variable(channel, SWITCH_SIGNAL_BRIDGE_VARIABLE))) {
 		switch_channel_set_variable(channel, SWITCH_SIGNAL_BRIDGE_VARIABLE, NULL);

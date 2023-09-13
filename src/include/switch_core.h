@@ -92,16 +92,18 @@ typedef struct device_uuid_node_s {
 
 /// PACKET STATS ///
 typedef struct packet_stats_io_info {
+	const char* in_callid;
 	char* in_codec;
 	uint32_t in_ssrc;
 	switch_sockaddr_t *in_remote_addr;
 	switch_sockaddr_t *in_local_addr;
+	const char* out_callid;
 	char* out_codec;
 	uint32_t out_ssrc;
 	switch_sockaddr_t *out_remote_addr;
 	switch_sockaddr_t *out_local_addr;
         int32_t count; // count of packets going out
-} packet_stats_io_info_t; 
+} packet_stats_io_info_t;
 
 typedef struct packet_stats {
         int min;
@@ -114,6 +116,7 @@ typedef struct packet_stats {
         int32_t in_plc;
         int32_t count;
 	packet_stats_io_info_t io_info;
+	switch_bool_t reported;
 } packet_stats_t;
 /// PACKET STATS ///
 

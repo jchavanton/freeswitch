@@ -285,7 +285,7 @@ void packet_stats_init(packet_stats_t *stats, int latency, int count) {
         stats->m2 = 0.0f;
         stats->count = count;
 }
-#define _VOR1(v) ((v)?(v):1) 
+#define _VOR1(v) ((v)?(v):1)
 void packet_stats_update(packet_stats_t *stats, int latency)
 {
         /* after 2^21 ~24 days at 1s interval, the average becomes a weighted average */
@@ -323,14 +323,19 @@ void packet_stats_update(packet_stats_t *stats, int latency)
 }
 
 void packet_stats_print(switch_core_session_t *session) {
-	if (session->stats.io_info.in_remote_addr) {
+	if (session->stats.io_info.in_remote_addr && !session->stats.reported) {
 		char in_ipbuf[48];
 		char in_l_ipbuf[48];
 		char out_ipbuf[48];
 		char out_l_ipbuf[48];
-		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_CRIT, 
-			"{\"in\" : { \"ssrc\": \"0x%08X\", \"remote_socket\": \"%s:%u\", \"local_socket\": \"%s:%u\", \"codec\": \"%s\", \"count\": %u, \"plc\": %u}"
-			",\"out\" : { \"ssrc\": \"0x%08X\", \"remote_socket\": \"%s:%u\", \"local_socket\": \"%s:%u\", \"codec\": \"%s\", \"count\": %u, \"max\": %d, \"avg\": %.2f }}\n",
+		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_CRIT,
+			"{"
+			"\"in\" : { \"call-id\": \"%s\", \"ssrc\": \"0x%08X\", \"remote_socket\": \"%s:%u\", \"local_socket\": \"%s:%u\""
+			", \"codec\": \"%s\", \"count\": %u, \"plc\": %u}"
+			","
+			"\"out\" : { \"call-id\": \"%s\", \"ssrc\": \"0x%08X\", \"remote_socket\": \"%s:%u\", \"local_socket\": \"%s:%u\""
+			", \"codec\": \"%s\", \"count\": %u, \"max\": %d, \"avg\": %.2f }}\n",
+			session->stats.io_info.in_callid,
 			session->stats.io_info.in_ssrc,
                switch_get_addr(in_ipbuf, sizeof(in_ipbuf), session->stats.io_info.in_remote_addr),
                session->stats.io_info.in_remote_addr->port,
@@ -339,6 +344,7 @@ void packet_stats_print(switch_core_session_t *session) {
 			session->stats.io_info.in_codec,
 			session->stats.in_count,
 			session->stats.in_plc,
+			session->stats.io_info.out_callid,
 			session->stats.io_info.out_ssrc,
                switch_get_addr(out_ipbuf, sizeof(out_ipbuf), session->stats.io_info.out_remote_addr),
                session->stats.io_info.out_local_addr->port,
@@ -349,8 +355,7 @@ void packet_stats_print(switch_core_session_t *session) {
 			session->stats.max,
 			session->stats.average
 		);
-	} else {
-		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_CRIT, ">>>>>>>>>>>>>>>>>>>>>> switch_core packet stats <<<<<<<<<<<<<<<<<<<");
+		session->stats.reported = true;
 	}
 }
 /// PACKET STATS ///
@@ -2033,7 +2038,6 @@ SWITCH_DECLARE(void) switch_media_handle_destroy(switch_core_session_t *session)
 	switch_rtp_engine_t *a_engine, *v_engine;//, *t_engine;
 
 	switch_assert(session);
-// packet_stats_print(session);
 	if (!(smh = session->media_handle)) {
 		return;
 	}
@@ -13894,7 +13898,6 @@ SWITCH_DECLARE(void) switch_core_session_stop_media(switch_core_session_t *sessi
 
 	switch_assert(session);
 
-// packet_stats_print(session);
 	if (!(smh = session->media_handle)) {
 		return;
 	}
@@ -15846,6 +15849,24 @@ SWITCH_DECLARE(switch_msrp_session_t *) switch_core_media_get_msrp_session(switc
 	return session->media_handle->msrp_session;
 }
 
+// SWITCH_DECLARE(switch_bool_t) switch_core_media_packet_vad(switch_core_session_t *session, switch_frame_t *frame) {
+// 	if (!switch_core_codec_ready(frame->codec)) {
+// 		return SWITCH_FALSE;
+// 	}
+//        if (frame && frame->data && frame->datalen > 0) {
+//                switch_bool_t ret = SWITCH_FALSE, *ret_p = &ret;
+//                switch_codec_control_type_t ret_t;
+// 
+// //               switch_core_media_codec_control(session, SWITCH_MEDIA_TYPE_AUDIO,
+// //                                               SWITCH_IO_WRITE, SCC_AUDIO_VAD,
+// //                                               SCCT_STRING, (void *)payload,
+// //                                               SCCT_INT, (void *)&len,
+// //                                               &ret_t, (void *)&ret_p);
+// 		switch_core_codec_control(frame->codec, SCC_AUDIO_VAD, SCCT_STRING, (void *)frame->data, SCCT_INT, (void *)&frame->datalen, &ret_t, (void *)ret_p);
+// 		return ret;
+//        }
+//        return SWITCH_TRUE;
+// }
 
 SWITCH_DECLARE(switch_status_t) switch_core_session_write_frame(switch_core_session_t *session, switch_frame_t *frame, switch_io_flag_t flags,
 																int stream_id)
@@ -15858,7 +15879,6 @@ SWITCH_DECLARE(switch_status_t) switch_core_session_write_frame(switch_core_sess
 
 	switch_assert(session != NULL);
 	switch_assert(frame != NULL);
-
 
 	if (!switch_channel_up_nosig(session->channel)) {
 		return SWITCH_STATUS_FALSE;
@@ -15996,6 +16016,10 @@ SWITCH_DECLARE(switch_status_t) switch_core_session_write_frame(switch_core_sess
 		switch_core_session_receive_message(session, &msg);
 		switch_set_flag(session, SSF_WARN_TRANSCODE);
 	}
+
+//	if (!strcmp(frame->codec->implementation->iananame,"opus")) {
+//		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_CRIT, "OPUS VAD[%d]LEN[%d]\n", switch_core_media_packet_vad(session, frame), frame->datalen);
+//	}
 
 	if (frame->codec) {
 		session->raw_write_frame.datalen = session->raw_write_frame.buflen;
@@ -16473,8 +16497,6 @@ SWITCH_DECLARE(switch_status_t) switch_core_session_write_frame(switch_core_sess
 
   done:
 
-
-
 	if (ptime_mismatch || resample) {
 		write_frame->timestamp = 0;
 	}
@@ -16485,22 +16507,17 @@ SWITCH_DECLARE(switch_status_t) switch_core_session_write_frame(switch_core_sess
 
   error:
 	/// PACKET STATS ///
-// 	if (frame->extra.received_ts) {
-		packet_stats_update(&session->stats, (switch_micro_time_now() - frame->extra.received_ts)/1000);
-		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_CRIT, "core_session_write_frame perform_write: ts[%u|%u] seq[%u|%u] now[%u] elapsed[%u]\n",
-			 (unsigned int)(frame->extra.received_ts/1000),
-			 (unsigned int)(write_frame->extra.received_ts/1000),
-			 frame->seq, 
-			 write_frame->seq, 
-			 (unsigned int)(switch_micro_time_now()/1000), 
-			 (unsigned int)(switch_micro_time_now()/1000) - (unsigned int)(frame->extra.received_ts/1000));
+	packet_stats_update(&session->stats, (switch_micro_time_now() - frame->extra.received_ts)/1000);
+	// switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_CRIT, "core_session_write_frame perform_write: ts[%u|%u] seq[%u|%u] now[%u] elapsed[%u]\n",
+	//		 (unsigned int)(frame->extra.received_ts/1000),
+	//		 (unsigned int)(write_frame->extra.received_ts/1000),
+	//		 frame->seq,
+	//		 write_frame->seq,
+	//		 (unsigned int)(switch_micro_time_now()/1000),
+	//		 (unsigned int)(switch_micro_time_now()/1000) - (unsigned int)(frame->extra.received_ts/1000));
 
-//		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_CRIT, "%d - %d = %d\n",
-//			       	(int)switch_micro_time_now()/1000, (int)frame->extra.received_ts/1000, (int)(switch_micro_time_now() - frame->extra.received_ts)/1000);
-//	}
 	session->stats.io_info.out_codec = write_frame->codec->implementation->iananame;
 	session->stats.io_info.in_codec = frame->codec->implementation->iananame;
-	// packet_stats_print(session);
 	/// PACKET STATS ///
 
 	switch_mutex_unlock(session->write_codec->mutex);
