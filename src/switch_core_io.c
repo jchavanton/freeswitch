@@ -100,7 +100,6 @@ SWITCH_DECLARE(switch_status_t) switch_core_session_read_frame(switch_core_sessi
 		if (switch_channel_test_flag(session->channel, CF_AUDIO_PAUSE_READ)) {
 			switch_yield(20000);
 			*frame = &runtime.dummy_cng_frame;
-			// switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "Media Paused!!!!\n");
 			return SWITCH_STATUS_SUCCESS;
 		}
 
@@ -170,6 +169,8 @@ SWITCH_DECLARE(switch_status_t) switch_core_session_read_frame(switch_core_sessi
 	}
 
 	if (session->endpoint_interface->io_routines->read_frame) {
+		// switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_WARNING, "endpoint_interface->io_routines->read_frame\n");
+
 		switch_mutex_unlock(session->read_codec->mutex);
 		switch_mutex_unlock(session->codec_read_mutex);
 		if ((status = session->endpoint_interface->io_routines->read_frame(session, frame, flags, stream_id)) == SWITCH_STATUS_SUCCESS) {
