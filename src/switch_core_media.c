@@ -35,6 +35,7 @@
 #include <switch_stun.h>
 #include <switch_nat.h>
 #include "private/switch_core_pvt.h"
+#include <fspr_network_io.h>
 #include <switch_curl.h>
 #include <errno.h>
 #include <sofia-sip/sdp.h>
@@ -273,6 +274,91 @@ struct switch_media_handle_s {
 	switch_time_t last_text_frame;
 
 };
+
+/// PACKET STATS ///
+void packet_stats_init(packet_stats_t *stats, int latency, int count) {
+        stats->min = latency;
+        stats->max = latency;
+        stats->average = latency;
+        stats->stdev = 0.0f;
+        stats->estimate = latency;
+        stats->m2 = 0.0f;
+        stats->count = count;
+}
+#define _VOR1(v) ((v)?(v):1)
+void packet_stats_update(packet_stats_t *stats, int latency)
+{
+        /* after 2^21 ~24 days at 1s interval, the average becomes a weighted average */
+        if (stats->count < 2097152) {
+                stats->count++;
+        } else { /* We adjust the sum of squares used by the oneline algorithm proportionally */
+                stats->m2 -= stats->m2/_VOR1(stats->count);
+        }
+
+        if (stats->count == 1)
+                packet_stats_init(stats, latency, 1);
+
+        if (stats->min > latency)
+                stats->min = latency;
+        if (stats->max < latency)
+                stats->max = latency;
+
+        /* standard deviation using oneline algorithm */
+        /* https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Online_algorithm */
+        if (stats->count > 1) {
+                float delta;
+                float delta2;
+                delta = latency - stats->average;
+                stats->average += delta/_VOR1(stats->count);
+                delta2 = latency - stats->average;
+                stats->m2 += ((double)delta)*delta2;
+                stats->stdev = sqrt(stats->m2 / _VOR1(stats->count-1));
+        }
+        /* exponentialy weighted moving average */
+        if (stats->count < 10) {
+                stats->estimate = stats->average;
+        } else {
+                stats->estimate = stats->estimate*0.99 + latency*(1-0.99);
+        }
+}
+
+void packet_stats_print(switch_core_session_t *session) {
+	if (session->stats.io_info.in_remote_addr && !session->stats.reported) {
+		char in_ipbuf[48];
+		char in_l_ipbuf[48];
+		char out_ipbuf[48];
+		char out_l_ipbuf[48];
+
+		switch_channel_set_variable_printf(session->channel, "packet_stats_report",
+			"{"
+			"\"in\" : { \"call-id\": \"%s\", \"ssrc\": \"0x%08X\", \"remote_socket\": \"%s:%u\", \"local_socket\": \"%s:%u\""
+			", \"codec\": \"%s\", \"count\": %u, \"plc\": %u}"
+			","
+			"\"out\" : { \"call-id\": \"%s\", \"ssrc\": \"0x%08X\", \"remote_socket\": \"%s:%u\", \"local_socket\": \"%s:%u\""
+			", \"codec\": \"%s\", \"count\": %u, \"max\": %d, \"avg\": %.2f }}",
+			session->stats.io_info.in_callid,
+			session->stats.io_info.in_ssrc,
+               switch_get_addr(in_ipbuf, sizeof(in_ipbuf), session->stats.io_info.in_remote_addr),
+               session->stats.io_info.in_remote_addr->port,
+               switch_get_addr(in_l_ipbuf, sizeof(in_ipbuf), session->stats.io_info.in_local_addr),
+               session->stats.io_info.in_local_addr->port,
+			session->stats.io_info.in_codec,
+			session->stats.in_count,
+			session->stats.in_plc,
+			session->stats.io_info.out_callid,
+			session->stats.io_info.out_ssrc,
+               switch_get_addr(out_ipbuf, sizeof(out_ipbuf), session->stats.io_info.out_remote_addr),
+               session->stats.io_info.out_local_addr->port,
+               switch_get_addr(out_l_ipbuf, sizeof(out_ipbuf), session->stats.io_info.out_local_addr),
+               session->stats.io_info.out_remote_addr->port,
+			session->stats.io_info.out_codec,
+			session->stats.count,
+			session->stats.max,
+			session->stats.average
+		);
+		session->stats.reported = true;
+	}
+}
 
 switch_srtp_crypto_suite_t SUITES[CRYPTO_INVALID] = {
 	{ "AEAD_AES_256_GCM_8", "", AEAD_AES_256_GCM_8, 44, 12},
@@ -1170,7 +1256,7 @@ static uint32_t parse_lifetime_mki(const char **p, const char *end)
 					val += ((**p) - '0') * i;
 				}
 				res |= (val & 0x000000ff);					/* MKI_SIZE */
-			} else if (isdigit(*(field_begin + 1)) && (field_begin + 2) && (*(field_begin + 2) == '^') && (field_begin + 3) && isdigit(*(field_begin + 3))) {
+			} else if (isdigit(*(field_begin + 1)) && (*(field_begin + 2) == '^') && isdigit(*(field_begin + 3))) {
 				res |= (CRYPTO_KEY_MATERIAL_LIFETIME << 24);
 				val = ((uint32_t) (*(field_begin + 1) - '0')) << 8;
 				res |= val;									/* LIFETIME base. */
@@ -1951,7 +2037,6 @@ SWITCH_DECLARE(void) switch_media_handle_destroy(switch_core_session_t *session)
 	switch_rtp_engine_t *a_engine, *v_engine;//, *t_engine;
 
 	switch_assert(session);
-
 	if (!(smh = session->media_handle)) {
 		return;
 	}
@@ -4762,7 +4847,7 @@ SWITCH_DECLARE(uint8_t) switch_core_media_negotiate_sdp(switch_core_session_t *s
 	switch_channel_t *channel = switch_core_session_get_channel(session);
 	const char *val;
 	const char *crypto = NULL;
-	int got_crypto = 0, got_video_crypto = 0, got_audio = 0, saw_audio = 0, saw_video = 0, got_avp = 0, got_video_avp = 0, got_video_savp = 0, got_savp = 0, got_udptl = 0, got_webrtc = 0, got_text = 0, got_text_crypto = 0, got_msrp = 0;
+	int got_crypto = 0, got_video_crypto = 0, got_audio = 0, saw_audio = 0, saw_video = 0, got_avp = 0, got_savp = 0, got_udptl = 0, got_webrtc = 0, got_text = 0, got_text_crypto = 0, got_msrp = 0;
 	int scrooge = 0;
 	sdp_parser_t *parser = NULL;
 	sdp_session_t *sdp;
@@ -4958,14 +5043,10 @@ SWITCH_DECLARE(uint8_t) switch_core_media_negotiate_sdp(switch_core_session_t *s
 		if (m->m_proto == sdp_proto_srtp || m->m_proto == sdp_proto_extended_srtp) {
 			if (m->m_type == sdp_media_audio) {
 				got_savp++;
-			} else {
-				got_video_savp++;
 			}
 		} else if (m->m_proto == sdp_proto_rtp) {
 			if (m->m_type == sdp_media_audio) {
 				got_avp++;
-			} else {
-				got_video_avp++;
 			}
 		} else if (m->m_proto == sdp_proto_udptl) {
 			got_udptl++;
@@ -7406,7 +7487,7 @@ static void *SWITCH_THREAD_FUNC video_helper_thread(switch_thread_t *thread, voi
 	switch_status_t status;
 	switch_frame_t *read_frame = NULL;
 	switch_media_handle_t *smh;
-	uint32_t loops = 0, xloops = 0, vloops = 0;
+	uint32_t loops = 0, xloops = 0;
 	switch_image_t *blank_img = NULL;
 	switch_frame_t fr = { 0 };
 	unsigned char *buf = NULL;
@@ -7530,8 +7611,6 @@ static void *SWITCH_THREAD_FUNC video_helper_thread(switch_thread_t *thread, voi
 			switch_cond_next();
 			continue;
 		}
-
-		vloops++;
 
 		send_blank = blank_enabled || switch_channel_test_flag(channel, CF_VIDEO_ECHO);
 
@@ -14243,7 +14322,7 @@ SWITCH_DECLARE(char *) switch_core_media_filter_sdp(const char *sdp_str, const c
 	switch_size_t len;
 	const char *i;
 	char *o;
-	int in_m = 0, m_tally = 0, slash = 0;
+	int in_m = 0, slash = 0;
 	int number = 0, skip = 0;
 	int remove = !strcasecmp(cmd, "remove");
 	int only = !strcasecmp(cmd, "only");
@@ -14277,7 +14356,6 @@ SWITCH_DECLARE(char *) switch_core_media_filter_sdp(const char *sdp_str, const c
 
 		if (*i == 'm' && *(i+1) == '=') {
 			in_m = 1;
-			m_tally++;
 		}
 
 		if (in_m) {
@@ -14981,7 +15059,6 @@ SWITCH_DECLARE(switch_status_t) switch_core_session_read_video_frame(switch_core
 {
 	switch_status_t status = SWITCH_STATUS_FALSE;
 	switch_io_event_hook_video_read_frame_t *ptr;
-	uint32_t loops = 0;
 	switch_media_handle_t *smh;
 	int is_keyframe = 0;
 
@@ -14992,8 +15069,6 @@ SWITCH_DECLARE(switch_status_t) switch_core_session_read_video_frame(switch_core
 	}
 
  top:
-
-	loops++;
 
 	if (switch_channel_down_nosig(session->channel)) {
 		return SWITCH_STATUS_FALSE;
@@ -15773,6 +15848,24 @@ SWITCH_DECLARE(switch_msrp_session_t *) switch_core_media_get_msrp_session(switc
 	return session->media_handle->msrp_session;
 }
 
+// SWITCH_DECLARE(switch_bool_t) switch_core_media_packet_vad(switch_core_session_t *session, switch_frame_t *frame) {
+// 	if (!switch_core_codec_ready(frame->codec)) {
+// 		return SWITCH_FALSE;
+// 	}
+//        if (frame && frame->data && frame->datalen > 0) {
+//                switch_bool_t ret = SWITCH_FALSE, *ret_p = &ret;
+//                switch_codec_control_type_t ret_t;
+// 
+// //               switch_core_media_codec_control(session, SWITCH_MEDIA_TYPE_AUDIO,
+// //                                               SWITCH_IO_WRITE, SCC_AUDIO_VAD,
+// //                                               SCCT_STRING, (void *)payload,
+// //                                               SCCT_INT, (void *)&len,
+// //                                               &ret_t, (void *)&ret_p);
+// 		switch_core_codec_control(frame->codec, SCC_AUDIO_VAD, SCCT_STRING, (void *)frame->data, SCCT_INT, (void *)&frame->datalen, &ret_t, (void *)ret_p);
+// 		return ret;
+//        }
+//        return SWITCH_TRUE;
+// }
 
 SWITCH_DECLARE(switch_status_t) switch_core_session_write_frame(switch_core_session_t *session, switch_frame_t *frame, switch_io_flag_t flags,
 																int stream_id)
@@ -15922,6 +16015,10 @@ SWITCH_DECLARE(switch_status_t) switch_core_session_write_frame(switch_core_sess
 		switch_core_session_receive_message(session, &msg);
 		switch_set_flag(session, SSF_WARN_TRANSCODE);
 	}
+
+//	if (!strcmp(frame->codec->implementation->iananame,"opus")) {
+//		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_CRIT, "OPUS VAD[%d]LEN[%d]\n", switch_core_media_packet_vad(session, frame), frame->datalen);
+//	}
 
 	if (frame->codec) {
 		session->raw_write_frame.datalen = session->raw_write_frame.buflen;
@@ -16132,6 +16229,7 @@ SWITCH_DECLARE(switch_status_t) switch_core_session_write_frame(switch_core_sess
 		goto done;
 	}
 
+	write_frame->extra.received_ts = frame->extra.received_ts;
 	if (session->write_codec) {
 		if (!ptime_mismatch && write_frame->codec && write_frame->codec->implementation &&
 			write_frame->codec->implementation->decoded_bytes_per_packet == session->write_impl.decoded_bytes_per_packet) {
@@ -16407,6 +16505,19 @@ SWITCH_DECLARE(switch_status_t) switch_core_session_write_frame(switch_core_sess
 	}
 
   error:
+	/// PACKET STATS ///
+	packet_stats_update(&session->stats, (switch_micro_time_now() - frame->extra.received_ts)/1000);
+	// switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_CRIT, "core_session_write_frame perform_write: ts[%u|%u] seq[%u|%u] now[%u] elapsed[%u]\n",
+	//		 (unsigned int)(frame->extra.received_ts/1000),
+	//		 (unsigned int)(write_frame->extra.received_ts/1000),
+	//		 frame->seq,
+	//		 write_frame->seq,
+	//		 (unsigned int)(switch_micro_time_now()/1000),
+	//		 (unsigned int)(switch_micro_time_now()/1000) - (unsigned int)(frame->extra.received_ts/1000));
+
+	session->stats.io_info.out_codec = write_frame->codec->implementation->iananame;
+	session->stats.io_info.in_codec = frame->codec->implementation->iananame;
+	/// PACKET STATS ///
 
 	switch_mutex_unlock(session->write_codec->mutex);
 	switch_mutex_unlock(frame->codec->mutex);
