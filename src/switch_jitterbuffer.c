@@ -932,8 +932,13 @@ static inline int check_jb_size(switch_jb_t *jb)
 
 		seq_hs = ntohs(np->packet.header.seq);
 		if (target_seq_hs > seq_hs) {
-			hide_node(np, SWITCH_FALSE);
-			old++;
+			const int MAX_DROPOUT = 3000;
+			uint16_t udelta = target_seq_hs - seq_hs;
+			if (udelta < MAX_DROPOUT) {
+				// not a sequence id roll-over, this is an old packet, we can hide it
+				hide_node(np, SWITCH_FALSE);
+				old++;
+			}
 			continue;
 		}
 
