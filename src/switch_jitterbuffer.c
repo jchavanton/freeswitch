@@ -786,8 +786,8 @@ static inline void increment_seq(switch_jb_t *jb)
 
 static inline void decrement_seq(switch_jb_t *jb)
 {
-	jb->last_target_seq = jb->target_seq;
 	jb->target_seq = htons((ntohs(jb->target_seq) - 1));
+	jb->last_target_seq = htons((ntohs(jb->target_seq) - 1));
 }
 
 static inline void set_read_seq(switch_jb_t *jb, uint16_t seq)
