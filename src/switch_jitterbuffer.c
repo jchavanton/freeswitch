@@ -70,6 +70,7 @@ typedef struct switch_jb_stats_s {
 	uint32_t fast_acceleration;
 	uint32_t forced_acceleration;
 	uint32_t expand;
+	int32_t expand_frame_len;
 	uint32_t jitter_max_ms;
 	int estimate_ms;
 	int buffer_size_ms;
@@ -1024,6 +1025,7 @@ static inline switch_status_t jb_next_packet_by_seq_with_acceleration(switch_jb_
 				jb_debug(jb, SWITCH_LOG_WARNING, "JITTER_BUFFER above max size: [%d>%d] inactive fast acceleration\n", visible_not_old, jb->max_frame_len);
 				jb->jitter.drop_gap = 3;
 				jb->jitter.stats.acceleration++;
+				jb->jitter.stats.expand_frame_len--;
 				jb->jitter.stats.fast_acceleration++;
 				return jb_next_packet_by_seq(jb, nodep);
 			} else {
@@ -1033,6 +1035,7 @@ static inline switch_status_t jb_next_packet_by_seq_with_acceleration(switch_jb_
 					jb_debug(jb, SWITCH_LOG_WARNING, "JITTER_BUFFER above max size: [%d>%d] forced acceleration\n", visible_not_old, jb->max_frame_len);
 					jb->jitter.drop_gap = 10;
 					jb->jitter.stats.acceleration++;
+					jb->jitter.stats.expand_frame_len--;
 					jb->jitter.stats.forced_acceleration++;
 					return jb_next_packet_by_seq(jb, nodep);
 				}
@@ -1063,6 +1066,7 @@ static inline switch_status_t jb_next_packet_by_seq_with_acceleration(switch_jb_
 					}
 
 					jb->jitter.stats.acceleration++;
+					jb->jitter.stats.expand_frame_len--;
 
 					return jb_next_packet_by_seq(jb, nodep);
 				} else {
@@ -1204,6 +1208,7 @@ SWITCH_DECLARE(void) switch_jb_debug_level(switch_jb_t *jb, uint8_t level)
 SWITCH_DECLARE(void) switch_jb_reset(switch_jb_t *jb)
 {
 	jb->jitter.stats.reset++;
+	jb->jitter.stats.expand_frame_len = 0;
 	if (jb->channel) {
 		switch_channel_set_variable_printf(jb->channel, "rtp_jb_reset_count", "%u", jb->jitter.stats.reset);
 		switch_channel_set_variable_printf(jb->channel, "rtp_jb_reset_too_big", "%u", jb->jitter.stats.reset_too_big);
@@ -1730,10 +1735,12 @@ SWITCH_DECLARE(switch_status_t) switch_jb_get_packet(switch_jb_t *jb, switch_rtp
 						jb->jitter.stats.estimate_ms = (int)((*jb->jitter.estimate) / ((jb->jitter.samples_per_second)) * 1000);
 						jb->jitter.stats.buffer_size_ms = (int)((visible_not_old * jb->jitter.samples_per_frame) / (jb->jitter.samples_per_second / 1000));
 						/* When playing PLC, we take the oportunity to expand the buffer if the jitter buffer is smaller than the 3x the estimated jitter. */
-						if (jb->jitter.stats.buffer_size_ms < (3 * jb->jitter.stats.estimate_ms)) {
+						if (jb->jitter.stats.expand_frame_len < 0) jb->jitter.stats.expand_frame_len = 0;
+						if ((jb->jitter.stats.expand_frame_len < jb->max_frame_len) && (jb->jitter.stats.buffer_size_ms < (3 * jb->jitter.stats.estimate_ms))) {
 							jb_debug(jb, SWITCH_LOG_INFO, "JITTER estimation %dms buffersize %d/%d %dms EXPAND [plc]\n",
 									 jb->jitter.stats.estimate_ms, jb->complete_frames, jb->frame_len, jb->jitter.stats.buffer_size_ms);
 							jb->jitter.stats.expand++;
+							jb->jitter.stats.expand_frame_len++;
 							decrement_seq(jb);
 						} else {
 							jb_debug(jb, 2, "%s", "Frame not found suggest PLC\n");
