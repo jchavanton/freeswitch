@@ -16463,7 +16463,14 @@ SWITCH_DECLARE(switch_status_t) switch_core_session_write_frame(switch_core_sess
 	}
 
   error:
-	packet_stats_update(&session->stats, (switch_micro_time_now() - frame->received_ts)/1000);
+	if (frame->received_ts > 0) {
+		int64_t d = (switch_micro_time_now() - frame->received_ts)/1000;
+		if (d > 2000) {
+			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_INFO, "excessive delay[%ld]-[%ld]=[%ldms] seq[%u]ssrc[0x%08X]\n",
+					(int64_t)(switch_micro_time_now()/1000), (int64_t)(frame->received_ts/1000), d, ntohs(frame->seq), frame->ssrc);
+		}
+		packet_stats_update(&session->stats, d);
+	}
 	session->stats.io_info.out_codec = write_frame->codec->implementation->iananame;
 	session->stats.io_info.in_codec = frame->codec->implementation->iananame;
 

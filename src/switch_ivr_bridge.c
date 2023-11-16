@@ -815,6 +815,7 @@ static void *audio_bridge_thread(switch_thread_t *thread, void *obj)
 			}
 
 			if (switch_test_flag((read_frame), SFF_PLC)) {
+				read_frame->received_ts = 0;
 				switch_core_session_increment_plc(session_b);
 			} else {
 				if (read_frame->packetlen > 0)
