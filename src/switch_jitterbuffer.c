@@ -939,8 +939,8 @@ static inline int check_jb_size(switch_jb_t *jb)
 				// not a sequence id roll-over, this is an old packet, we can hide it
 				hide_node(np, SWITCH_FALSE);
 				old++;
+				continue;
 			}
-			continue;
 		}
 
 		if (count == 0) {
