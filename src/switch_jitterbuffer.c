@@ -1736,7 +1736,15 @@ SWITCH_DECLARE(switch_status_t) switch_jb_get_packet(switch_jb_t *jb, switch_rtp
 						jb->jitter.stats.buffer_size_ms = (int)((visible_not_old * jb->jitter.samples_per_frame) / (jb->jitter.samples_per_second / 1000));
 						/* When playing PLC, we take the oportunity to expand the buffer if the jitter buffer is smaller than the 3x the estimated jitter. */
 						if (jb->jitter.stats.expand_frame_len < 0) jb->jitter.stats.expand_frame_len = 0;
-						if ((jb->jitter.stats.expand_frame_len < jb->max_frame_len) && (jb->jitter.stats.buffer_size_ms < (3 * jb->jitter.stats.estimate_ms))) {
+
+						if (jb->jitter.stats.expand_frame_len > jb->max_frame_len) {
+							jb_debug(jb, SWITCH_LOG_INFO, "JITTER  estimation %dms buffersize %d/%d %dms RESET TOO BIG [%d>%d]\n",
+							   jb->jitter.stats.estimate_ms, jb->complete_frames, jb->frame_len, jb->jitter.stats.buffer_size_ms, jb->jitter.stats.expand_frame_len, jb->max_frame_len);
+							jb->jitter.stats.reset_too_big++;
+							jb->jitter.stats.expand_frame_len=0;
+							switch_jb_reset(jb);
+							switch_goto_status(SWITCH_STATUS_RESTART, end);
+						} else if (jb->jitter.stats.buffer_size_ms < (3 * jb->jitter.stats.estimate_ms)) {
 							jb_debug(jb, SWITCH_LOG_INFO, "JITTER estimation %dms buffersize %d/%d %dms EXPAND [plc]\n",
 									 jb->jitter.stats.estimate_ms, jb->complete_frames, jb->frame_len, jb->jitter.stats.buffer_size_ms);
 							jb->jitter.stats.expand++;
