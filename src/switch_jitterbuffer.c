@@ -37,7 +37,7 @@
 #define RENACK_TIME 100000
 #define MAX_FRAME_PADDING 2
 #define MAX_MISSING_SEQ 20
-#define jb_debug(_jb, _level, _format, ...) if (_jb->debug_level >= _level) switch_log_printf(SWITCH_CHANNEL_SESSION_LOG_CLEAN(_jb->session), SWITCH_LOG_ALERT, "JB:%p:%s:%d/%d lv:%d ln:%.4d sz:%.3u/%.3u/%.3u/%.3u c:%.3u %.3u/%.3u/%.3u/%.3u %.2f%% ->" _format, (void *) _jb, (jb->type == SJB_TEXT ? "txt" : (jb->type == SJB_AUDIO ? "aud" : "vid")), _jb->allocated_nodes, _jb->visible_nodes, _level, __LINE__,  _jb->min_frame_len, _jb->max_frame_len, _jb->frame_len, _jb->complete_frames, _jb->period_count, _jb->consec_good_count, _jb->period_good_count, _jb->consec_miss_count, _jb->period_miss_count, _jb->period_miss_pct, __VA_ARGS__)
+#define jb_debug(_jb, _level, _format, ...) if (SWITCH_LOG_ALERT >= _level) switch_log_printf(SWITCH_CHANNEL_SESSION_LOG_CLEAN(_jb->session), SWITCH_LOG_ALERT, "JB:%p:%s:%d/%d lv:%d ln:%.4d sz:%.3u/%.3u/%.3u/%.3u c:%.3u %.3u/%.3u/%.3u/%.3u %.2f%% ->" _format, (void *) _jb, (jb->type == SJB_TEXT ? "txt" : (jb->type == SJB_AUDIO ? "aud" : "vid")), _jb->allocated_nodes, _jb->visible_nodes, _level, __LINE__,  _jb->min_frame_len, _jb->max_frame_len, _jb->frame_len, _jb->complete_frames, _jb->period_count, _jb->consec_good_count, _jb->period_good_count, _jb->consec_miss_count, _jb->period_miss_count, _jb->period_miss_pct, __VA_ARGS__)
 
 //const char *TOKEN_1 = "ONE";
 //const char *TOKEN_2 = "TWO";
@@ -576,7 +576,7 @@ static void jb_frame_inc_line(switch_jb_t *jb, int i, int line)
 	}
 
 	if (old_frame_len != jb->frame_len) {
-		jb_debug(jb, 1, "%d Change framelen from %u to %u\n", line, old_frame_len, jb->frame_len);
+		jb_debug(jb, 2, "%d Change framelen from %u to %u\n", line, old_frame_len, jb->frame_len);
 
 		//if (jb->session) {
 		//	switch_core_session_request_video_refresh(jb->session);
@@ -819,9 +819,9 @@ static inline switch_status_t jb_next_packet_by_seq(switch_jb_t *jb, switch_jb_n
 
 	if (!jb->target_seq) {
 		if ((node = switch_core_inthash_find(jb->node_hash, jb->target_seq))) {
-			jb_debug(jb, 2, "FOUND rollover seq: %u\n", ntohs(jb->target_seq));
+			jb_debug(jb, 1, "FOUND rollover seq: %u\n", ntohs(jb->target_seq));
 		} else if ((node = jb_find_lowest_seq(jb, 0))) {
-			jb_debug(jb, 2, "No target seq using seq: %u as a starting point\n", ntohs(node->packet.header.seq));
+			jb_debug(jb, 1, "No target seq using seq: %u as a starting point\n", ntohs(node->packet.header.seq));
 		} else {
 			jb_debug(jb, 1, "%s", "No nodes available....\n");
 		}
@@ -915,6 +915,26 @@ static inline switch_status_t jb_next_packet_by_ts(switch_jb_t *jb, switch_jb_no
 
 }
 
+static inline void print_jb(switch_jb_t *jb)
+{
+	switch_jb_node_t *np;
+	uint16_t h_seq, target_seq_hs;
+	uint16_t seq = 0;
+
+	switch_mutex_lock(jb->list_mutex);
+
+	target_seq_hs = ntohs(jb->target_seq);
+	for (np = jb->node_list; np; np = np->next) {
+		h_seq = ntohs(np->packet.header.seq);
+		if (seq < h_seq)
+			seq=h_seq;
+	}
+	jb_debug(jb, SWITCH_LOG_ALERT, "JITTER buffer target[%u] highest seq[%u]\n",target_seq_hs, seq);
+	switch_mutex_unlock(jb->list_mutex);
+
+
+}
+
 static inline int check_jb_size(switch_jb_t *jb)
 {
 	switch_jb_node_t *np;
@@ -934,15 +954,16 @@ static inline int check_jb_size(switch_jb_t *jb)
 		}
 
 		seq_hs = ntohs(np->packet.header.seq);
-		if (target_seq_hs > (seq_hs+1)) {
-			const int MAX_DROPOUT = 3000;
-			uint16_t udelta = target_seq_hs - seq_hs;
-			if (udelta < MAX_DROPOUT) {
-				// not a sequence id roll-over, this is an old packet, we can hide it
-				hide_node(np, SWITCH_FALSE);
+//		if (target_seq_hs > (seq_hs+1)) {
+		if (target_seq_hs > seq_hs) {
+//			const int MAX_DROPOUT = 3000;
+//			uint16_t udelta = target_seq_hs - seq_hs;
+//			if (udelta < MAX_DROPOUT) {
+//				// not a sequence id roll-over, this is an old packet, we can hide it
+//				hide_node(np, SWITCH_FALSE);
 				old++;
 				continue;
-			}
+//			}
 		}
 
 		if (count == 0) {
@@ -1024,7 +1045,7 @@ static inline switch_status_t jb_next_packet_by_seq_with_acceleration(switch_jb_
 		/* If the jitter buffer size is above the its max size, we force accelerate */
 		if (jb->packets_in_buffer >= jb->max_frame_len) {
 			if (packet_vad(jb, packet, len) == SWITCH_FALSE) {
-				jb_debug(jb, SWITCH_LOG_WARNING, "JITTER_BUFFER above max size: [%d>%d] inactive fast acceleration\n", jb->packets_in_buffer, jb->max_frame_len);
+				jb_debug(jb, SWITCH_LOG_ALERT, "JITTER_BUFFER above max size: [%d>%d] inactive fast acceleration\n", jb->packets_in_buffer, jb->max_frame_len);
 				jb->jitter.drop_gap = 3;
 				jb->jitter.stats.acceleration++;
 				jb->jitter.stats.expand_frame_len--;
@@ -1034,7 +1055,7 @@ static inline switch_status_t jb_next_packet_by_seq_with_acceleration(switch_jb_
 				if (jb->jitter.drop_gap > 0) {
 					jb->jitter.drop_gap--;
 				} else {
-					jb_debug(jb, SWITCH_LOG_WARNING, "JITTER_BUFFER above max size: [%d>%d] forced acceleration\n", jb->packets_in_buffer, jb->max_frame_len);
+					jb_debug(jb, SWITCH_LOG_ALERT, "JITTER_BUFFER above max size: [%d>%d] forced acceleration\n", jb->packets_in_buffer, jb->max_frame_len);
 					jb->jitter.drop_gap = 10;
 					jb->jitter.stats.acceleration++;
 					jb->jitter.stats.expand_frame_len--;
@@ -1060,10 +1081,10 @@ static inline switch_status_t jb_next_packet_by_seq_with_acceleration(switch_jb_
 				if (status != SWITCH_STATUS_SUCCESS || packet_vad(jb, packet, len) == SWITCH_FALSE) {
 					jb->jitter.drop_gap = 3;
 					if (status != SWITCH_STATUS_SUCCESS) {
-						jb_debug(jb, SWITCH_LOG_INFO, "JITTER estimation n/a buffersize %d/%d %dms seq:%u [drop-missing/no-plc]\n",
+						jb_debug(jb, SWITCH_LOG_ALERT, "JITTER estimation n/a buffersize %d/%d %dms seq:%u [drop-missing/no-plc]\n",
 								 jb->complete_frames, jb->frame_len, jb->jitter.stats.buffer_size_ms, seq);
 					} else {
-						jb_debug(jb, SWITCH_LOG_INFO, "JITTER estimation %dms buffersize %d/%d %dms seq:%u ACCELERATE [drop]\n",
+						jb_debug(jb, SWITCH_LOG_ALERT, "JITTER estimation %dms buffersize %d/%d %dms seq:%u ACCELERATE [drop]\n",
 								 jb->jitter.stats.estimate_ms, jb->complete_frames, jb->frame_len, jb->jitter.stats.buffer_size_ms, seq);
 					}
 
@@ -1205,6 +1226,7 @@ SWITCH_DECLARE(int) switch_jb_frame_count(switch_jb_t *jb)
 SWITCH_DECLARE(void) switch_jb_debug_level(switch_jb_t *jb, uint8_t level)
 {
 	jb->debug_level = level;
+	jb->debug_level = SWITCH_LOG_WARNING;
 }
 
 SWITCH_DECLARE(void) switch_jb_reset(switch_jb_t *jb)
@@ -1739,15 +1761,18 @@ SWITCH_DECLARE(switch_status_t) switch_jb_get_packet(switch_jb_t *jb, switch_rtp
 						if (jb->jitter.stats.expand_frame_len < 0) jb->jitter.stats.expand_frame_len = 0;
 
 						if (jb->jitter.stats.expand_frame_len > jb->max_frame_len) {
-							jb_debug(jb, SWITCH_LOG_INFO, "JITTER  estimation %dms buffersize %d/%d %dms RESET TOO BIG [%d>%d]\n",
-							   jb->jitter.stats.estimate_ms, jb->complete_frames, jb->frame_len, jb->jitter.stats.buffer_size_ms, jb->jitter.stats.expand_frame_len, jb->max_frame_len);
+							jb_debug(jb, SWITCH_LOG_ALERT, "JITTER  estimation %dms buffersize %d/%d %dms RESET TOO BIG [%d>%d] target seq[%u]\n",
+							   jb->jitter.stats.estimate_ms, jb->complete_frames, jb->frame_len, jb->jitter.stats.buffer_size_ms,
+							   jb->jitter.stats.expand_frame_len, jb->max_frame_len, ntohs(jb->target_seq));
 							jb->jitter.stats.reset_too_expanded++;
 							jb->jitter.stats.expand_frame_len=0;
 							switch_jb_reset(jb);
 							switch_goto_status(SWITCH_STATUS_RESTART, end);
 						} else if (jb->jitter.stats.buffer_size_ms < (3 * jb->jitter.stats.estimate_ms)) {
-							jb_debug(jb, SWITCH_LOG_INFO, "JITTER estimation %dms buffersize %d/%d %dms EXPAND [plc]\n",
-									 jb->jitter.stats.estimate_ms, jb->complete_frames, jb->frame_len, jb->jitter.stats.buffer_size_ms);
+							jb_debug(jb, SWITCH_LOG_ALERT, "JITTER estimation %dms buffersize %d/%d %dms EXPAND [plc] target_seq[%u] expand[%d] now[%ld]\n",
+									 jb->jitter.stats.estimate_ms, jb->complete_frames, jb->frame_len, jb->jitter.stats.buffer_size_ms,
+									 ntohs(jb->target_seq), jb->jitter.stats.expand_frame_len, (int64_t)(switch_micro_time_now()/1000));
+							print_jb(jb);
 							jb->jitter.stats.expand++;
 							jb->jitter.stats.expand_frame_len++;
 							decrement_seq(jb);
