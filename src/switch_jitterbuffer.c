@@ -60,6 +60,7 @@ typedef struct switch_jb_node_s {
 
 typedef struct switch_jb_stats_s {
 	uint32_t reset_too_big;
+	uint32_t reset_too_expanded;
 	uint32_t reset_missing_frames;
 	uint32_t reset_ts_jump;
 	uint32_t reset_error;
@@ -137,6 +138,7 @@ struct switch_jb_s {
 	uint32_t buffer_lag;
 	uint32_t flush;
 	uint32_t packet_count;
+	int32_t packets_in_buffer;
 	uint32_t max_packet_len;
 	uint32_t period_len;
 	uint32_t nack_saved_the_day;
@@ -932,7 +934,7 @@ static inline int check_jb_size(switch_jb_t *jb)
 		}
 
 		seq_hs = ntohs(np->packet.header.seq);
-		if (target_seq_hs > seq_hs) {
+		if (target_seq_hs > (seq_hs+1)) {
 			const int MAX_DROPOUT = 3000;
 			uint16_t udelta = target_seq_hs - seq_hs;
 			if (udelta < MAX_DROPOUT) {
@@ -1014,15 +1016,15 @@ static inline switch_status_t jb_next_packet_by_seq_with_acceleration(switch_jb_
 	   select packet to drop/accelerate. */
 
 	if (jb->elastic && jb->jitter.estimate && (jb->visible_nodes * jb->jitter.samples_per_frame) > 0 && jb->jitter.samples_per_second) {
-		int visible_not_old = check_jb_size(jb);
+		jb->packets_in_buffer = check_jb_size(jb);
 
 		jb->jitter.stats.estimate_ms = (int)((*jb->jitter.estimate) / ((jb->jitter.samples_per_second)) * 1000);
-		jb->jitter.stats.buffer_size_ms = (int)((visible_not_old * jb->jitter.samples_per_frame) / (jb->jitter.samples_per_second / 1000));
+		jb->jitter.stats.buffer_size_ms = (int)((jb->packets_in_buffer * jb->jitter.samples_per_frame) / (jb->jitter.samples_per_second / 1000));
 
 		/* If the jitter buffer size is above the its max size, we force accelerate */
-		if (visible_not_old >= jb->max_frame_len) {
+		if (jb->packets_in_buffer >= jb->max_frame_len) {
 			if (packet_vad(jb, packet, len) == SWITCH_FALSE) {
-				jb_debug(jb, SWITCH_LOG_WARNING, "JITTER_BUFFER above max size: [%d>%d] inactive fast acceleration\n", visible_not_old, jb->max_frame_len);
+				jb_debug(jb, SWITCH_LOG_WARNING, "JITTER_BUFFER above max size: [%d>%d] inactive fast acceleration\n", jb->packets_in_buffer, jb->max_frame_len);
 				jb->jitter.drop_gap = 3;
 				jb->jitter.stats.acceleration++;
 				jb->jitter.stats.expand_frame_len--;
@@ -1032,7 +1034,7 @@ static inline switch_status_t jb_next_packet_by_seq_with_acceleration(switch_jb_
 				if (jb->jitter.drop_gap > 0) {
 					jb->jitter.drop_gap--;
 				} else {
-					jb_debug(jb, SWITCH_LOG_WARNING, "JITTER_BUFFER above max size: [%d>%d] forced acceleration\n", visible_not_old, jb->max_frame_len);
+					jb_debug(jb, SWITCH_LOG_WARNING, "JITTER_BUFFER above max size: [%d>%d] forced acceleration\n", jb->packets_in_buffer, jb->max_frame_len);
 					jb->jitter.drop_gap = 10;
 					jb->jitter.stats.acceleration++;
 					jb->jitter.stats.expand_frame_len--;
@@ -1212,6 +1214,7 @@ SWITCH_DECLARE(void) switch_jb_reset(switch_jb_t *jb)
 	if (jb->channel) {
 		switch_channel_set_variable_printf(jb->channel, "rtp_jb_reset_count", "%u", jb->jitter.stats.reset);
 		switch_channel_set_variable_printf(jb->channel, "rtp_jb_reset_too_big", "%u", jb->jitter.stats.reset_too_big);
+		switch_channel_set_variable_printf(jb->channel, "rtp_jb_reset_too_expanded", "%u", jb->jitter.stats.reset_too_expanded);
 		switch_channel_set_variable_printf(jb->channel, "rtp_jb_reset_missing_frames", "%u", jb->jitter.stats.reset_missing_frames);
 		switch_channel_set_variable_printf(jb->channel, "rtp_jb_reset_ts_jump", "%u", jb->jitter.stats.reset_ts_jump);
 		switch_channel_set_variable_printf(jb->channel, "rtp_jb_reset_error", "%u", jb->jitter.stats.reset_error);
@@ -1730,17 +1733,15 @@ SWITCH_DECLARE(switch_status_t) switch_jb_get_packet(switch_jb_t *jb, switch_rtp
 					switch_goto_status(SWITCH_STATUS_RESTART, end);
 				} else {
 					if (jb->elastic) {
-						int visible_not_old = check_jb_size(jb);
-
 						jb->jitter.stats.estimate_ms = (int)((*jb->jitter.estimate) / ((jb->jitter.samples_per_second)) * 1000);
-						jb->jitter.stats.buffer_size_ms = (int)((visible_not_old * jb->jitter.samples_per_frame) / (jb->jitter.samples_per_second / 1000));
+						jb->jitter.stats.buffer_size_ms = (int)((jb->packets_in_buffer * jb->jitter.samples_per_frame) / (jb->jitter.samples_per_second / 1000));
 						/* When playing PLC, we take the oportunity to expand the buffer if the jitter buffer is smaller than the 3x the estimated jitter. */
 						if (jb->jitter.stats.expand_frame_len < 0) jb->jitter.stats.expand_frame_len = 0;
 
 						if (jb->jitter.stats.expand_frame_len > jb->max_frame_len) {
 							jb_debug(jb, SWITCH_LOG_INFO, "JITTER  estimation %dms buffersize %d/%d %dms RESET TOO BIG [%d>%d]\n",
 							   jb->jitter.stats.estimate_ms, jb->complete_frames, jb->frame_len, jb->jitter.stats.buffer_size_ms, jb->jitter.stats.expand_frame_len, jb->max_frame_len);
-							jb->jitter.stats.reset_too_big++;
+							jb->jitter.stats.reset_too_expanded++;
 							jb->jitter.stats.expand_frame_len=0;
 							switch_jb_reset(jb);
 							switch_goto_status(SWITCH_STATUS_RESTART, end);
