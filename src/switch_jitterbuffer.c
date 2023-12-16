@@ -73,6 +73,7 @@ typedef struct switch_jb_stats_s {
 	uint32_t expand;
 	int32_t expand_frame_len;
 	uint32_t jitter_max_ms;
+	uint32_t buffering_skip;
 	int estimate_ms;
 	int buffer_size_ms;
 } switch_jb_stats_t;
@@ -1000,6 +1001,7 @@ static inline int check_jb_size(switch_jb_t *jb)
 			switch_channel_set_variable_printf(jb->channel, "rtp_jb_acceleration_ms", "%u", jb->jitter.stats.acceleration * packet_ms);
 			switch_channel_set_variable_printf(jb->channel, "rtp_jb_fast_acceleration_ms", "%u", jb->jitter.stats.fast_acceleration * packet_ms);
 			switch_channel_set_variable_printf(jb->channel, "rtp_jb_forced_acceleration_ms", "%u", jb->jitter.stats.forced_acceleration * packet_ms);
+			switch_channel_set_variable_printf(jb->channel, "rtp_jb_buffering_skip", "%u", jb->jitter.stats.buffering_skip);
 			switch_channel_set_variable_printf(jb->channel, "rtp_jb_expand_ms", "%u", jb->jitter.stats.expand * packet_ms);
 		}
 
@@ -1141,6 +1143,7 @@ SWITCH_DECLARE(void) switch_jb_set_jitter_estimator(switch_jb_t *jb, double *jit
 			switch_channel_set_variable_printf(jb->channel, "rtp_jb_acceleration_ms", "%u", 0);
 			switch_channel_set_variable_printf(jb->channel, "rtp_jb_fast_acceleration_ms", "%u", 0);
 			switch_channel_set_variable_printf(jb->channel, "rtp_jb_forced_acceleration_ms", "%u", 0);
+			switch_channel_set_variable_printf(jb->channel, "rtp_jb_buffering_skip", "%u", 0);
 			switch_channel_set_variable_printf(jb->channel, "rtp_jb_expand_ms", "%u", 0);
 			switch_channel_set_variable_printf(jb->channel, "rtp_jb_jitter_max_ms", "%u", 0);
 			switch_channel_set_variable_printf(jb->channel, "rtp_jb_jitter_ms", "%u", 0);
@@ -1646,6 +1649,7 @@ SWITCH_DECLARE(switch_status_t) switch_jb_get_packet(switch_jb_t *jb, switch_rtp
 
 		if (!jb->flush) {
 			jb_debug(jb, 2, "BUFFERING %u/%u\n", jb->complete_frames , jb->frame_len);
+			jb->jitter.stats.buffering_skip++;
 			switch_goto_status(SWITCH_STATUS_MORE_DATA, end);
 		}
 	}
