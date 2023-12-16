@@ -576,7 +576,7 @@ static void jb_frame_inc_line(switch_jb_t *jb, int i, int line)
 	}
 
 	if (old_frame_len != jb->frame_len) {
-		jb_debug(jb, 2, "%d Change framelen from %u to %u\n", line, old_frame_len, jb->frame_len);
+		jb_debug(jb, 1, "%d Change framelen from %u to %u\n", line, old_frame_len, jb->frame_len);
 
 		//if (jb->session) {
 		//	switch_core_session_request_video_refresh(jb->session);
@@ -931,8 +931,6 @@ static inline void print_jb(switch_jb_t *jb)
 	}
 	jb_debug(jb, SWITCH_LOG_ALERT, "JITTER buffer target[%u] highest seq[%u]\n",target_seq_hs, seq);
 	switch_mutex_unlock(jb->list_mutex);
-
-
 }
 
 static inline int check_jb_size(switch_jb_t *jb)
@@ -1642,7 +1640,7 @@ SWITCH_DECLARE(switch_status_t) switch_jb_get_packet(switch_jb_t *jb, switch_rtp
 		switch_goto_status(SWITCH_STATUS_BREAK, end);
 	}
 
-	if (jb->complete_frames < jb->frame_len) {
+	if (!jb->elastic && (jb->complete_frames < jb->frame_len)) {
 
 		switch_jb_poll(jb);
 
@@ -1766,6 +1764,7 @@ SWITCH_DECLARE(switch_status_t) switch_jb_get_packet(switch_jb_t *jb, switch_rtp
 							   jb->jitter.stats.expand_frame_len, jb->max_frame_len, ntohs(jb->target_seq));
 							jb->jitter.stats.reset_too_expanded++;
 							jb->jitter.stats.expand_frame_len=0;
+							print_jb(jb);
 							switch_jb_reset(jb);
 							switch_goto_status(SWITCH_STATUS_RESTART, end);
 						} else if (jb->jitter.stats.buffer_size_ms < (3 * jb->jitter.stats.estimate_ms)) {
@@ -1776,6 +1775,11 @@ SWITCH_DECLARE(switch_status_t) switch_jb_get_packet(switch_jb_t *jb, switch_rtp
 							jb->jitter.stats.expand++;
 							jb->jitter.stats.expand_frame_len++;
 							decrement_seq(jb);
+						} else if (jb->jitter.stats.expand_frame_len >= jb->max_frame_len) {
+							jb->jitter.stats.reset_error++;
+							jb->jitter.stats.expand_frame_len=0;
+							switch_jb_reset(jb);
+							switch_goto_status(SWITCH_STATUS_RESTART, end);
 						} else {
 							jb_debug(jb, 2, "%s", "Frame not found suggest PLC\n");
 						}
