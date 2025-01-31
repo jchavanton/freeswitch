@@ -407,11 +407,13 @@ static int phase_b_handler(void *user_data, int result)
 static int phase_d_handler(void *user_data, int msg)
 {
 	t30_stats_t t30_stats;
+	const char *tmp;
 	char *fax_file_image_resolution = NULL;
 	char *fax_line_image_resolution = NULL;
 	char *fax_file_image_pixel_size = NULL;
 	char *fax_line_image_pixel_size = NULL;
 	char *fax_image_size = NULL;
+	char *fax_images_size = NULL;
 	char *fax_bad_rows = NULL;
 	char *fax_encoding = NULL;
 	char *fax_longest_bad_row_run = NULL;
@@ -459,6 +461,14 @@ static int phase_d_handler(void *user_data, int msg)
 	fax_image_size = switch_core_session_sprintf(session, "%d", t30_stats.image_size);
 	if (fax_image_size) {
 		switch_channel_set_variable(channel, "fax_image_size", fax_image_size);
+		if ((tmp = switch_channel_get_variable(channel, "fax_images_size"))) {
+			fax_images_size = switch_core_session_sprintf(session, "%d", t30_stats.image_size + atoi(tmp));
+		} else {
+			fax_images_size = switch_core_session_sprintf(session, "%d", t30_stats.image_size);
+		}
+		if (fax_images_size) {
+			switch_channel_set_variable(channel, "fax_images_size", fax_images_size);
+		}
 	}
 
 	fax_bad_rows = switch_core_session_sprintf(session, "%d", t30_stats.bad_rows);
