@@ -78,10 +78,6 @@ const char * get_t38_status(t38_mode_t mode)
 	return str;
 }
 
-typedef struct jb_s {
-	int idx;
-	switch_frame_t *frames[10];
-} jb_t;
 
 struct pvt_s {
 	switch_core_session_t *session;
@@ -135,20 +131,7 @@ static struct {
 	int thread_running;
 } t38_state_list;
 
-switch_frame_t* jb_put(jb_t *jb, switch_frame_t *read_frame) {
-	if (jb->frames[jb->idx] != NULL) {
-		switch_frame_free(&jb->frames[jb->idx]);
-		jb->frames[jb->idx] = NULL;
-	}
-	if (switch_frame_dup(read_frame,&jb->frames[jb->idx]) != SWITCH_STATUS_SUCCESS) {
-		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CRIT, "Error duplicating frame\n");
-	}
-	jb->idx++;
-	if (jb->idx > 10) {
-		jb->idx = 0;
-	}
-	return jb->frames[jb->idx];
-}
+
 
 static void wake_thread(int force)
 {
@@ -1519,7 +1502,6 @@ void mod_spandsp_fax_stop_fax(switch_core_session_t *session)
 void mod_spandsp_fax_process_fax(switch_core_session_t *session, const char *data, mod_spandsp_fax_application_mode_t app_mode)
 {
 	pvt_t *pvt;
-	jb_t jb;
 	switch_channel_t *channel = switch_core_session_get_channel(session);
 	switch_codec_t read_codec = { 0 };
 	switch_codec_t write_codec = { 0 };
@@ -1531,7 +1513,6 @@ void mod_spandsp_fax_process_fax(switch_core_session_t *session, const char *dat
 
 	switch_core_session_get_read_impl(session, &read_impl);
 
-	memset(&jb, 0, sizeof(jb_t));
 	counter_increment();
 
 	if (app_mode == FUNCTION_GW ||
@@ -1698,13 +1679,6 @@ void mod_spandsp_fax_process_fax(switch_core_session_t *session, const char *dat
 
 		/* read new audio frame from the channel */
 		status = switch_core_session_read_frame(session, &read_frame, SWITCH_IO_FLAG_NONE, 0);
-		read_frame = jb_put(&jb, read_frame);
-		if (!read_frame) {
-			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "%s read_frame empty continue status[%d]\n", switch_channel_get_name(channel), status);
-			continue;
-		} else {
-			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "%s read_frame from jb:%i\n", switch_channel_get_name(channel), jb.idx);
-		}
 
 		if (!SWITCH_READ_ACCEPTABLE(status) || pvt->done) {
 			/* Our duty is over */
