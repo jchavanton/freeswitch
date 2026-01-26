@@ -840,6 +840,10 @@ static switch_status_t spanfax_init(pvt_t *pvt, transport_mode_t trans_mode)
 		if (pvt->verbose) {
 			span_log_set_level(fax_get_logging_state(fax), SPAN_LOG_SHOW_SEVERITY | SPAN_LOG_SHOW_PROTOCOL | SPAN_LOG_FLOW);
 			span_log_set_level(t30_get_logging_state(t30), SPAN_LOG_SHOW_SEVERITY | SPAN_LOG_SHOW_PROTOCOL | SPAN_LOG_FLOW);
+		} else {
+			/* Always enable WARNING level for important diagnostics */
+			span_log_set_level(fax_get_logging_state(fax), SPAN_LOG_SHOW_SEVERITY | SPAN_LOG_SHOW_PROTOCOL | SPAN_LOG_WARNING);
+			span_log_set_level(t30_get_logging_state(t30), SPAN_LOG_SHOW_SEVERITY | SPAN_LOG_SHOW_PROTOCOL | SPAN_LOG_WARNING);
 		}
 		break;
 	case T38_MODE:
@@ -895,6 +899,10 @@ static switch_status_t spanfax_init(pvt_t *pvt, transport_mode_t trans_mode)
 			if (pvt->verbose) {
 				span_log_set_level(t38_terminal_get_logging_state(t38), SPAN_LOG_SHOW_SEVERITY | SPAN_LOG_SHOW_PROTOCOL | SPAN_LOG_FLOW);
 				span_log_set_level(t30_get_logging_state(t30), SPAN_LOG_SHOW_SEVERITY | SPAN_LOG_SHOW_PROTOCOL | SPAN_LOG_FLOW);
+			} else {
+				/* Always enable WARNING level for important diagnostics */
+				span_log_set_level(t38_terminal_get_logging_state(t38), SPAN_LOG_SHOW_SEVERITY | SPAN_LOG_SHOW_PROTOCOL | SPAN_LOG_WARNING);
+				span_log_set_level(t30_get_logging_state(t30), SPAN_LOG_SHOW_SEVERITY | SPAN_LOG_SHOW_PROTOCOL | SPAN_LOG_WARNING);
 			}
 		}
 		break;
@@ -951,6 +959,10 @@ static switch_status_t spanfax_init(pvt_t *pvt, transport_mode_t trans_mode)
 		if (pvt->verbose) {
 			span_log_set_level(t38_gateway_get_logging_state(pvt->t38_gateway_state), SPAN_LOG_SHOW_SEVERITY | SPAN_LOG_SHOW_PROTOCOL | SPAN_LOG_FLOW);
 			span_log_set_level(t38_core_get_logging_state(pvt->t38_core), SPAN_LOG_SHOW_SEVERITY | SPAN_LOG_SHOW_PROTOCOL | SPAN_LOG_FLOW);
+		} else {
+			/* Always enable WARNING level for important diagnostics */
+			span_log_set_level(t38_gateway_get_logging_state(pvt->t38_gateway_state), SPAN_LOG_SHOW_SEVERITY | SPAN_LOG_SHOW_PROTOCOL | SPAN_LOG_WARNING);
+			span_log_set_level(t38_core_get_logging_state(pvt->t38_core), SPAN_LOG_SHOW_SEVERITY | SPAN_LOG_SHOW_PROTOCOL | SPAN_LOG_WARNING);
 		}
 
 		t38_set_t38_version(pvt->t38_core, 0);
