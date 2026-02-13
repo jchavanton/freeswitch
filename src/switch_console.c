@@ -1064,6 +1064,11 @@ static void *SWITCH_THREAD_FUNC console_thread(switch_thread_t *thread, void *ob
 
 		line = el_gets(el, &count);
 
+		if (line == NULL || count < 0) {
+			switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_WARNING, "Console input error (terminal disconnected?), exiting console thread.\n");
+			break;
+		}
+
 		if (count > 1) {
 			if (!zstr(line)) {
 				char *cmd = strdup(line);
