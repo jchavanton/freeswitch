@@ -34,6 +34,8 @@
 #include <switch_console.h>
 #ifndef _MSC_VER
 #include <switch_private.h>
+#include <errno.h>
+#include <time.h>
 #endif
 #define CMD_BUFLEN 1024
 
@@ -1102,13 +1104,34 @@ SWITCH_DECLARE(void) switch_console_loop(void)
 	switch_thread_t *thread;
 	switch_threadattr_t *thd_attr = NULL;
 	switch_memory_pool_t *pool;
+	FILE *console_file = switch_core_get_console();
+
+	/* Check if stdin is a TTY before setting up console */
+	if (!isatty(fileno(console_file))) {
+		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE,
+			"No TTY detected, running in foreground without console.\n");
+		/* Simple foreground loop - logging still goes to stdout/stderr */
+		while (1) {
+			int32_t arg = 0;
+			struct timespec ts = { 1, 0 };  /* 1 second */
+			switch_core_session_ctl(SCSC_CHECK_RUNNING, &arg);
+			if (!arg) {
+				break;
+			}
+			/* Use nanosleep with retry on EINTR to avoid busy loop */
+			while (nanosleep(&ts, &ts) == -1 && errno == EINTR) {
+				/* Retry with remaining time if interrupted by signal */
+			}
+		}
+		return;
+	}
 
 	if (switch_core_new_memory_pool(&pool) != SWITCH_STATUS_SUCCESS) {
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CRIT, "Pool Failure\n");
 		return;
 	}
 
-	el = el_init(__FILE__, switch_core_get_console(), switch_core_get_console(), switch_core_get_console());
+	el = el_init(__FILE__, console_file, console_file, console_file);
 	el_set(el, EL_PROMPT, &prompt);
 	el_set(el, EL_EDITOR, "emacs");
 	/* AGX: Bind Keyboard function keys. This has been tested with:
@@ -1558,6 +1581,27 @@ SWITCH_DECLARE(void) switch_console_loop(void)
 	int32_t activity = 1;
 #ifndef _MSC_VER
 	int x = 0;
+	FILE *console_file = switch_core_get_console();
+
+	/* Check if stdin is a TTY before setting up console */
+	if (!isatty(fileno(console_file))) {
+		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_NOTICE,
+			"No TTY detected, running in foreground without console.\n");
+		/* Simple foreground loop - logging still goes to stdout/stderr */
+		while (1) {
+			int32_t arg = 0;
+			struct timespec ts = { 1, 0 };  /* 1 second */
+			switch_core_session_ctl(SCSC_CHECK_RUNNING, &arg);
+			if (!arg) {
+				break;
+			}
+			/* Use nanosleep with retry on EINTR to avoid busy loop */
+			while (nanosleep(&ts, &ts) == -1 && errno == EINTR) {
+				/* Retry with remaining time if interrupted by signal */
+			}
+		}
+		return;
+	}
 #else
 	char keys[CMD_BUFLEN];
 #endif
