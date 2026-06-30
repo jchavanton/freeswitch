@@ -153,14 +153,21 @@ struct switch_jb_s {
 	double arrival_jitter_var;       /* fast EWMV variance */
 	double arrival_jitter_ms_slow;   /* slow EWMA mean (α=1/128) */
 	double arrival_jitter_var_slow;  /* slow EWMV variance (α=1/128) */
-	/* Clock drift tracker. Records baseline offset (recv − rtp) at first packet,
-	 * then EWMA of slope (PPM). Logged only, not used in sizing.
-	 * RTP clock rate is inferred from observed timestamps because jitter.samples_per_second
-	 * is the codec sample rate, which doesn't match the RTP timestamp rate for codecs
-	 * like opus (RTP clock always 48000 per RFC 7587 regardless of internal rate). */
-	switch_time_t arrival_first_recv_us;
-	uint32_t      arrival_first_rtp_ts;
-	uint32_t      arrival_rtp_clock_hz;   /* 0 = not yet measured; otherwise 8000/16000/48000 */
+	/* Clock drift tracker — GStreamer-style sliding baseline.
+	 * Records (recv_us − rtp_us) for each packet and slides the baseline
+	 * DOWN to the smallest observed offset. This avoids the bias problem
+	 * where a delayed first packet would lock in a wrong reference. PPM is
+	 * computed against this sliding min, not against packet 1.
+	 * Logged only, not used in sizing.
+	 * RTP clock rate is inferred from observed timestamps because
+	 * jitter.samples_per_second is the codec sample rate, which doesn't
+	 * match the RTP timestamp rate for codecs like opus (RTP clock always
+	 * 48000 per RFC 7587 regardless of internal rate). */
+	switch_time_t arrival_first_recv_us;     /* first recv timestamp (for slope denominator) */
+	uint32_t      arrival_first_rtp_ts;      /* first RTP timestamp seen */
+	uint32_t      arrival_rtp_clock_hz;      /* 0 = not yet measured; otherwise 8000/16000/48000 */
+	int64_t       arrival_offset_min_us;     /* sliding min(recv_us − rtp_us) */
+	uint8_t       arrival_offset_min_set;    /* 0 until first sample */
 	double        arrival_clock_drift_ppm;
 	uint16_t next_seq;
 	switch_size_t last_len;
@@ -1755,7 +1762,7 @@ SWITCH_DECLARE(switch_status_t) switch_jb_put_packet(switch_jb_t *jb, switch_rtp
 		switch_time_t now_us = switch_micro_time_now();
 		double delta_ms, ptime_ms, deviation, abs_dev, diff_f, diff_s, drift_ppm;
 		uint32_t rtp_ts_now;
-		int64_t elapsed_us, rtp_us;
+		int64_t elapsed_us, rtp_us, offset_us;
 
 		if (jb->last_arrival_us) {
 			delta_ms = (double)(now_us - jb->last_arrival_us) / 1000.0;
@@ -1773,15 +1780,21 @@ SWITCH_DECLARE(switch_status_t) switch_jb_put_packet(switch_jb_t *jb, switch_rtp
 		}
 		jb->last_arrival_us = now_us;
 
-		/* Clock-drift tracker. Records baseline (recv − rtp) on the first
-		 * packet, then computes PPM = (current_offset − baseline) / elapsed.
-		 * Logged only; not used in sizing decisions.
+		/* Clock-drift tracker — GStreamer-style sliding-min baseline.
+		 *
+		 * Per-packet offset = (recv_us − rtp_us). Without drift, this is a
+		 * constant: the wall-clock time the packet spent in flight plus a
+		 * fixed phase. With drift, it slowly rises (sender ahead) or falls.
+		 *
+		 * Anchoring to packet 1 (our old approach) was fragile: if packet 1
+		 * arrived during a jitter spike, every later sample inherited that
+		 * bias. GStreamer instead tracks min(offset) as the running baseline
+		 * — whenever a packet arrives at a smaller offset, the baseline slides
+		 * down. Drift PPM is then (current_offset − min) / elapsed.
 		 *
 		 * RTP clock rate is inferred from observed timestamps (snapped to
 		 * 8/16/48 kHz) because jitter.samples_per_second is the codec sample
-		 * rate, not the RTP timestamp rate. Opus uses 48000 per RFC 7587
-		 * even when decoding at 16k or 8k. We wait ~3s after the baseline
-		 * before snapping; then drift is computed using the snapped rate. */
+		 * rate, not the RTP timestamp rate. Opus uses 48000 per RFC 7587. */
 		if (!jb->arrival_first_recv_us) {
 			jb->arrival_first_recv_us = now_us;
 			jb->arrival_first_rtp_ts  = ntohl(packet->header.ts);
@@ -1791,18 +1804,27 @@ SWITCH_DECLARE(switch_status_t) switch_jb_put_packet(switch_jb_t *jb, switch_rtp
 			if (!jb->arrival_rtp_clock_hz && elapsed_us > 3000000) {
 				int64_t rtp_ticks = (int64_t)(rtp_ts_now - jb->arrival_first_rtp_ts);
 				int64_t hz_est = (rtp_ticks * 1000000LL) / elapsed_us;
-				/* Snap to nearest standard rate. */
 				if      (hz_est > 24000) jb->arrival_rtp_clock_hz = 48000;
 				else if (hz_est > 12000) jb->arrival_rtp_clock_hz = 16000;
 				else                     jb->arrival_rtp_clock_hz = 8000;
 			}
-			if (jb->arrival_rtp_clock_hz && elapsed_us > 1000000) {
+			if (jb->arrival_rtp_clock_hz) {
+				/* Compute current per-packet offset in microseconds. */
 				rtp_us = ((int64_t)(rtp_ts_now - jb->arrival_first_rtp_ts) * 1000000LL)
 				          / (int64_t)jb->arrival_rtp_clock_hz;
-				drift_ppm = 1e6 * ((double)(elapsed_us - rtp_us) / (double)elapsed_us);
-				/* Gentle EWMA on the slope reading itself (α=1/16) — slope
-				 * estimate should not jitter, even if individual samples do. */
-				jb->arrival_clock_drift_ppm += (drift_ppm - jb->arrival_clock_drift_ppm) / 16.0;
+				offset_us = elapsed_us - rtp_us;
+				/* Slide baseline DOWN whenever we see a smaller offset.
+				 * First sample initializes the baseline. */
+				if (!jb->arrival_offset_min_set || offset_us < jb->arrival_offset_min_us) {
+					jb->arrival_offset_min_us  = offset_us;
+					jb->arrival_offset_min_set = 1;
+				}
+				/* Drift PPM relative to sliding baseline. Only compute after
+				 * a warmup window so the baseline has had a chance to settle. */
+				if (elapsed_us > 1000000) {
+					drift_ppm = 1e6 * (double)(offset_us - jb->arrival_offset_min_us) / (double)elapsed_us;
+					jb->arrival_clock_drift_ppm += (drift_ppm - jb->arrival_clock_drift_ppm) / 16.0;
+				}
 			}
 		}
 	}
