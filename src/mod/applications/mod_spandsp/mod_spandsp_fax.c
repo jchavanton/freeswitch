@@ -1533,6 +1533,19 @@ void mod_spandsp_fax_process_fax(switch_core_session_t *session, const char *dat
 		switch_channel_set_app_flag_key("T38", channel, CF_APP_T38_POSSIBLE);
 	}
 
+	/* Settle delay after CF_APP_T38_POSSIBLE is set, before starting T.30.
+	 * Lets a T.38 re-INVITE arriving in this window be accepted, unlike a
+	 * pre-rxfax silence_stream which blocks before the flag is armed. */
+	{
+		const char *tmp = switch_channel_get_variable(channel, "fax_start_delay_ms");
+		if (tmp) {
+			int delay_ms = atoi(tmp);
+			if (delay_ms > 0 && delay_ms <= 10000) {
+				switch_yield(delay_ms * 1000);
+			}
+		}
+	}
+
 	pvt = pvt_init(session, app_mode);
 	switch_channel_set_private(channel, "_fax_pvt", pvt);
 
