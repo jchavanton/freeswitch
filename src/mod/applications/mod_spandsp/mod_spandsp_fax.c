@@ -347,6 +347,10 @@ static int phase_b_handler(void *user_data, int result)
 
 	switch_channel_set_variable(channel, "fax_ecm_used", (t30_stats.error_correcting_mode) ? "on" : "off");
 	switch_channel_set_variable(channel, "fax_t38_status", get_t38_status(pvt->t38_mode));
+	/* Phase B is only reached after the remote fax tone (CNG for rxfax, CED for
+	   txfax) was heard and the T.30 handshake began. Setting this variable here
+	   gives downstream a boolean: "spandsp confirmed a real fax on the far end". */
+	switch_channel_set_variable(channel, "fax_remote_tone_detected", "true");
 	switch_channel_set_variable(channel, "fax_local_station_id", local_ident);
 	switch_channel_set_variable(channel, "fax_remote_station_id", far_ident);
 	switch_channel_set_variable(channel, "fax_remote_country", switch_str_nil(t30_get_rx_country(pvt->t30)));
