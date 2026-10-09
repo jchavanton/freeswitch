@@ -1215,7 +1215,31 @@ static t38_mode_t negotiate_t38(pvt_t *pvt)
 		if (t38_options->T38FaxVersion > 3) {
 			t38_options->T38FaxVersion = 3;
 		}
-		t38_options->T38MaxBitRate = (pvt->disable_v17)  ?  9600  :  14400;
+		/* SDP answer rate selection.
+		 *
+		 * Default (legacy FS behavior): overwrite the offer's T38MaxBitRate /
+		 * T38FaxMaxDatagram with our local max, regardless of what the offerer
+		 * asked for. This is non-compliant with T.38 Annex B / RFC 5347 (an
+		 * answerer should return min(offer, local_max)) and breaks peers that
+		 * genuinely can't do rates above what they offered — e.g. Grandstream
+		 * HT80x firmwares that advertise 9600 and send DCN mid-handshake if
+		 * the answer bumps it to 14400.
+		 *
+		 * Opt-in: if the channel variable fax_t38_answer_min_of_two is true,
+		 * respect the offer's cap. Set this from the dialplan when matching
+		 * ${sip_user_agent} against a known-broken device, so the fix is
+		 * surgical and does not change behavior for the fleet. */
+		{
+			uint32_t local_max = (pvt->disable_v17) ? 9600 : 14400;
+			const char *min_var = switch_channel_get_variable(channel, "fax_t38_answer_min_of_two");
+			if (switch_true(min_var)) {
+				if (t38_options->T38MaxBitRate == 0 || t38_options->T38MaxBitRate > local_max) {
+					t38_options->T38MaxBitRate = local_max;
+				}
+			} else {
+				t38_options->T38MaxBitRate = local_max;
+			}
+		}
 
 		/* cisco gets mad when we set this to one in a response where they set it to 0, are we allowed to hardcode this to 1 on responses?  */
 		/*
@@ -1230,7 +1254,17 @@ static t38_mode_t negotiate_t38(pvt_t *pvt)
         if (!t38_options->T38FaxMaxBuffer) {
             t38_options->T38FaxMaxBuffer = 2000;
         }
-		t38_options->T38FaxMaxDatagram = LOCAL_FAX_MAX_DATAGRAM;
+		/* Same gating as T38MaxBitRate above. */
+		{
+			const char *min_var = switch_channel_get_variable(channel, "fax_t38_answer_min_of_two");
+			if (switch_true(min_var)) {
+				if (!t38_options->T38FaxMaxDatagram || t38_options->T38FaxMaxDatagram > LOCAL_FAX_MAX_DATAGRAM) {
+					t38_options->T38FaxMaxDatagram = LOCAL_FAX_MAX_DATAGRAM;
+				}
+			} else {
+				t38_options->T38FaxMaxDatagram = LOCAL_FAX_MAX_DATAGRAM;
+			}
+		}
 		if (!zstr(t38_options->T38FaxUdpEC) &&
 				(strcasecmp(t38_options->T38FaxUdpEC, "t38UDPRedundancy") == 0 ||
 				strcasecmp(t38_options->T38FaxUdpEC, "t38UDPFEC") == 0)) {
