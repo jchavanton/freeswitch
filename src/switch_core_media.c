@@ -300,8 +300,11 @@ void packet_stats_update(packet_stats_t *stats, int latency)
 }
 
 void packet_stats_print(switch_core_session_t *session) {
+	/* No timed packet yet is no report: the first state change after a re-bridge
+	 * comes before any audio, and marking that empty segment reported would keep
+	 * the real one from ever being written. */
 	if (session->stats.io_info.in_remote_addr && session->stats.io_info.out_local_addr
-		       && !session->stats.reported) {
+		       && !session->stats.reported && session->stats.count > 0) {
 		char in_ipbuf[48];
 		char in_l_ipbuf[48];
 		char out_ipbuf[48];

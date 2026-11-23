@@ -485,6 +485,8 @@ struct switch_rtp {
 	int skip_timer;
 	uint32_t prev_nacks_inflight;
 	switch_bool_t packet_stats_io_info_set;
+	/* bridge_uuid the io_info was set for: a re-bridge to a new peer must set it again */
+	char packet_stats_peer_uuid[SWITCH_UUID_FORMATTED_LENGTH + 1];
 };
 
 struct switch_rtcp_report_block {
@@ -5689,11 +5691,15 @@ static void set_packet_stats_io_info(switch_rtp_t *rtp_session) {
 	switch_core_session_t *b_session=NULL;
 	switch_rtp_t *b_rtp_session=NULL;
 	switch_channel_t *b_channel=NULL;
-	if (rtp_session->packet_stats_io_info_set)
-		return;
 	if (channel) {
 		uuid = switch_channel_get_variable_dup(channel,"bridge_uuid", SWITCH_FALSE, -1);
 	}
+	/* Set once per peer, not once per session: after a re-bridge (uuid_bridge to
+	 * a new leg) the new peer would otherwise never get its io_info, and so never
+	 * a packet_stats_report. */
+	if (rtp_session->packet_stats_io_info_set
+		&& (!uuid || !strcmp(uuid, rtp_session->packet_stats_peer_uuid)))
+		return;
 	if (uuid) {
 		b_session = switch_core_session_locate(uuid);
 	}
@@ -5713,8 +5719,10 @@ static void set_packet_stats_io_info(switch_rtp_t *rtp_session) {
 			packet_stats_io_info.in_codec = '\0';
 			packet_stats_io_info.in_remote_addr = rtp_session->remote_addr;
 			packet_stats_io_info.in_local_addr = rtp_session->local_addr;
-			if (rtp_session->remote_ssrc && b_rtp_session->ssrc)
+			if (rtp_session->remote_ssrc && b_rtp_session->ssrc) {
 				rtp_session->packet_stats_io_info_set = SWITCH_TRUE;
+				switch_copy_string(rtp_session->packet_stats_peer_uuid, uuid, sizeof(rtp_session->packet_stats_peer_uuid));
+			}
 			switch_core_session_set_io_stats(b_rtp_session->session, &packet_stats_io_info);
 		}
 	}
