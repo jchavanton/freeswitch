@@ -4843,6 +4843,26 @@ SWITCH_DECLARE(const char *) switch_channel_get_partner_uuid_copy(switch_channel
 }
 
 
+SWITCH_DECLARE(const char *) switch_channel_get_variable_copy(switch_channel_t *channel, const char *varname, char *buf, switch_size_t blen)
+{
+	const char *v = NULL;
+
+	switch_assert(channel != NULL);
+	if (!buf || !blen) {
+		return NULL;
+	}
+
+	switch_mutex_lock(channel->profile_mutex);
+	if ((v = switch_channel_get_variable_dup(channel, varname, SWITCH_FALSE, -1))) {
+		switch_copy_string(buf, v, blen);
+		v = buf;
+	}
+	switch_mutex_unlock(channel->profile_mutex);
+
+	return v;
+}
+
+
 SWITCH_DECLARE(const char *) switch_channel_get_partner_uuid(switch_channel_t *channel)
 {
 	const char *uuid = NULL;

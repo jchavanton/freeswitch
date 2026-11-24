@@ -5687,12 +5687,16 @@ static int get_recv_payload(switch_rtp_t *rtp_session)
 
 static void set_packet_stats_io_info(switch_rtp_t *rtp_session) {
 	switch_channel_t *channel = switch_core_session_get_channel(rtp_session->session);
+	char uuid_buf[SWITCH_UUID_FORMATTED_LENGTH + 1];
 	const char *uuid=NULL;
 	switch_core_session_t *b_session=NULL;
 	switch_rtp_t *b_rtp_session=NULL;
 	switch_channel_t *b_channel=NULL;
 	if (channel) {
-		uuid = switch_channel_get_variable_dup(channel,"bridge_uuid", SWITCH_FALSE, -1);
+		/* Copied under the channel lock: this runs on every RTP read, and a
+		 * borrowed pointer could be freed by a concurrent uuid_bridge before
+		 * the strcmp below or the locate uses it. */
+		uuid = switch_channel_get_variable_copy(channel, "bridge_uuid", uuid_buf, sizeof(uuid_buf));
 	}
 	/* Set once per peer, not once per session: after a re-bridge (uuid_bridge to
 	 * a new leg) the new peer would otherwise never get its io_info, and so never
@@ -5706,7 +5710,6 @@ static void set_packet_stats_io_info(switch_rtp_t *rtp_session) {
 	if (b_session) {
 		b_rtp_session = switch_core_media_get_rtp_session(b_session, SWITCH_MEDIA_TYPE_AUDIO);
 		b_channel = switch_core_session_get_channel(b_session);
-		switch_core_session_rwunlock(b_session);
 
 		if (b_rtp_session && b_channel) {
 			packet_stats_io_info_t packet_stats_io_info;
@@ -5725,6 +5728,9 @@ static void set_packet_stats_io_info(switch_rtp_t *rtp_session) {
 			}
 			switch_core_session_set_io_stats(b_rtp_session->session, &packet_stats_io_info);
 		}
+		/* Held until here: b_rtp_session belongs to b_session, which could
+		 * otherwise be destroyed while we read and write it. */
+		switch_core_session_rwunlock(b_session);
 	}
 
 }
