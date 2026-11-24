@@ -291,32 +291,12 @@ void packet_stats_update(packet_stats_t *stats, int latency)
 		packet_stats_init(stats, latency, 1);
 	if (stats->max < latency)
 		stats->max = latency;
-	stats->hist[latency < 0 ? 0 : (latency >= PACKET_STATS_HIST_MS ? PACKET_STATS_HIST_MS : latency)]++;
 
 	if (stats->count > 1) {
 		float delta;
 		delta = latency - stats->average;
 		stats->average += delta/_VOR1(stats->count);
 	}
-}
-
-/* Nearest-rank p95 of the packet delays, in ms. When it falls in the overflow
- * bucket the true value is at least PACKET_STATS_HIST_MS and unknown, so the
- * max, an upper bound, stands in for it. */
-static int packet_stats_p95(const packet_stats_t *stats)
-{
-	uint64_t rank = ((uint64_t)stats->count * 95 + 99) / 100;
-	uint64_t seen = 0;
-	int ms;
-
-	if (!rank)
-		return 0;
-	for (ms = 0; ms < PACKET_STATS_HIST_MS; ms++) {
-		seen += stats->hist[ms];
-		if (seen >= rank)
-			return ms;
-	}
-	return stats->max;
 }
 
 void packet_stats_print(switch_core_session_t *session) {
@@ -337,7 +317,7 @@ void packet_stats_print(switch_core_session_t *session) {
 			", \"codec\": \"%s\", \"count\": %u, \"plc\": %u}"
 			","
 			"\"out\" : { \"ssrc\": \"0x%08X\", \"remote_socket\": \"%s:%u\", \"local_socket\": \"%s:%u\""
-			", \"codec\": \"%s\", \"count\": %u, \"max\": %d, \"avg\": %.2f, \"p95\": %d }}",
+			", \"codec\": \"%s\", \"count\": %u, \"max\": %d, \"avg\": %.2f }}",
 			session->stats.io_info.in_ssrc,
                switch_get_addr(in_ipbuf, sizeof(in_ipbuf), session->stats.io_info.in_remote_addr),
                session->stats.io_info.in_remote_addr->port,
@@ -354,8 +334,7 @@ void packet_stats_print(switch_core_session_t *session) {
 			session->stats.io_info.out_codec,
 			session->stats.count,
 			session->stats.max,
-			session->stats.average,
-			packet_stats_p95(&session->stats)
+			session->stats.average
 		);
 		v = switch_channel_get_variable_dup(session->channel,"packet_stats_report", SWITCH_FALSE, -1);
 		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_INFO, "[packet_stats_report] %s\n", v);

@@ -104,14 +104,9 @@ typedef struct packet_stats_io_info {
 	uint32_t count; // count of packets going out
 } packet_stats_io_info_t;
 
-/* Per-packet in-to-out delay histogram for the p95: 1 ms buckets from 0 to
- * PACKET_STATS_HIST_MS - 1, and one overflow bucket at PACKET_STATS_HIST_MS. */
-#define PACKET_STATS_HIST_MS 400
-
 typedef struct packet_stats {
 	int max;
 	float average;
-	uint32_t hist[PACKET_STATS_HIST_MS + 1];
 	uint32_t in_count;
 	uint32_t in_plc;
 	uint32_t count;
