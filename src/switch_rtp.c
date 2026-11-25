@@ -1861,6 +1861,16 @@ static int rtcp_stats(switch_rtp_t *rtp_session)
 		stats->last_pkt_tsdiff = pkt_tsdiff;
 		/* Interarrival jitter estimation, "J(i) = J(i-1) + ( |D(i-1,i)| - J(i-1) )/16" */
 		stats->inter_jitter = (stats->inter_jitter + (((double)packet_spacing_diff - stats->inter_jitter) /16.));
+
+		if (rtp_session->samples_per_second) {
+			double jitter_ms = stats->inter_jitter * 1000.0 / rtp_session->samples_per_second;
+
+			stats->inter_jitter_sum_ms += jitter_ms;
+			stats->inter_jitter_samples++;
+			if (jitter_ms > stats->inter_jitter_max_ms) {
+				stats->inter_jitter_max_ms = jitter_ms;
+			}
+		}
 	}
 
 #ifdef DEBUG_RTCP
