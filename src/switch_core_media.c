@@ -300,8 +300,11 @@ void packet_stats_update(packet_stats_t *stats, int latency)
 }
 
 void packet_stats_print(switch_core_session_t *session) {
+	/* No timed packet yet is no report: the first state change after a re-bridge
+	 * comes before any audio, and marking that empty segment reported would keep
+	 * the real one from ever being written. */
 	if (session->stats.io_info.in_remote_addr && session->stats.io_info.out_local_addr
-		       && !session->stats.reported) {
+		       && !session->stats.reported && session->stats.count > 0) {
 		char in_ipbuf[48];
 		char in_l_ipbuf[48];
 		char out_ipbuf[48];
@@ -1950,6 +1953,15 @@ static void set_stats(switch_core_session_t *session, switch_media_type_t type, 
 		add_stat(stats->inbound.flaws, "in_flaw_total");
 		add_stat_double(stats->inbound.R, "in_quality_percentage");
 		add_stat_double(stats->inbound.mos, "in_mos");
+
+		/* The RTCP interarrival jitter (RFC 3550 J) over the whole session. The
+		 * audio jitter buffer reads the same J, but only in elastic mode (opus
+		 * with rtp_jitter_buffer_accelerate), so rtp_jb_jitter_* stay 0 on other
+		 * codecs. Absent when RTCP computed nothing, rather than a false 0. */
+		if (stats->rtcp.inter_jitter_samples) {
+			add_stat_double(stats->rtcp.inter_jitter_sum_ms / stats->rtcp.inter_jitter_samples, "in_rtcp_jitter_avg_ms");
+			add_stat_double(stats->rtcp.inter_jitter_max_ms, "in_rtcp_jitter_max_ms");
+		}
 
 
 		add_stat(stats->outbound.raw_bytes, "out_raw_bytes");

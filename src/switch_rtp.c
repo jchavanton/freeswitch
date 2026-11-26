@@ -485,6 +485,8 @@ struct switch_rtp {
 	int skip_timer;
 	uint32_t prev_nacks_inflight;
 	switch_bool_t packet_stats_io_info_set;
+	/* bridge_uuid the io_info was set for: a re-bridge to a new peer must set it again */
+	char packet_stats_peer_uuid[SWITCH_UUID_FORMATTED_LENGTH + 1];
 };
 
 struct switch_rtcp_report_block {
@@ -1859,6 +1861,16 @@ static int rtcp_stats(switch_rtp_t *rtp_session)
 		stats->last_pkt_tsdiff = pkt_tsdiff;
 		/* Interarrival jitter estimation, "J(i) = J(i-1) + ( |D(i-1,i)| - J(i-1) )/16" */
 		stats->inter_jitter = (stats->inter_jitter + (((double)packet_spacing_diff - stats->inter_jitter) /16.));
+
+		if (rtp_session->samples_per_second) {
+			double jitter_ms = stats->inter_jitter * 1000.0 / rtp_session->samples_per_second;
+
+			stats->inter_jitter_sum_ms += jitter_ms;
+			stats->inter_jitter_samples++;
+			if (jitter_ms > stats->inter_jitter_max_ms) {
+				stats->inter_jitter_max_ms = jitter_ms;
+			}
+		}
 	}
 
 #ifdef DEBUG_RTCP
@@ -5685,22 +5697,29 @@ static int get_recv_payload(switch_rtp_t *rtp_session)
 
 static void set_packet_stats_io_info(switch_rtp_t *rtp_session) {
 	switch_channel_t *channel = switch_core_session_get_channel(rtp_session->session);
+	char uuid_buf[SWITCH_UUID_FORMATTED_LENGTH + 1];
 	const char *uuid=NULL;
 	switch_core_session_t *b_session=NULL;
 	switch_rtp_t *b_rtp_session=NULL;
 	switch_channel_t *b_channel=NULL;
-	if (rtp_session->packet_stats_io_info_set)
-		return;
 	if (channel) {
-		uuid = switch_channel_get_variable_dup(channel,"bridge_uuid", SWITCH_FALSE, -1);
+		/* Copied under the channel lock: this runs on every RTP read, and a
+		 * borrowed pointer could be freed by a concurrent uuid_bridge before
+		 * the strcmp below or the locate uses it. */
+		uuid = switch_channel_get_variable_copy(channel, "bridge_uuid", uuid_buf, sizeof(uuid_buf));
 	}
+	/* Set once per peer, not once per session: after a re-bridge (uuid_bridge to
+	 * a new leg) the new peer would otherwise never get its io_info, and so never
+	 * a packet_stats_report. */
+	if (rtp_session->packet_stats_io_info_set
+		&& (!uuid || !strcmp(uuid, rtp_session->packet_stats_peer_uuid)))
+		return;
 	if (uuid) {
 		b_session = switch_core_session_locate(uuid);
 	}
 	if (b_session) {
 		b_rtp_session = switch_core_media_get_rtp_session(b_session, SWITCH_MEDIA_TYPE_AUDIO);
 		b_channel = switch_core_session_get_channel(b_session);
-		switch_core_session_rwunlock(b_session);
 
 		if (b_rtp_session && b_channel) {
 			packet_stats_io_info_t packet_stats_io_info;
@@ -5713,10 +5732,15 @@ static void set_packet_stats_io_info(switch_rtp_t *rtp_session) {
 			packet_stats_io_info.in_codec = '\0';
 			packet_stats_io_info.in_remote_addr = rtp_session->remote_addr;
 			packet_stats_io_info.in_local_addr = rtp_session->local_addr;
-			if (rtp_session->remote_ssrc && b_rtp_session->ssrc)
+			if (rtp_session->remote_ssrc && b_rtp_session->ssrc) {
 				rtp_session->packet_stats_io_info_set = SWITCH_TRUE;
+				switch_copy_string(rtp_session->packet_stats_peer_uuid, uuid, sizeof(rtp_session->packet_stats_peer_uuid));
+			}
 			switch_core_session_set_io_stats(b_rtp_session->session, &packet_stats_io_info);
 		}
+		/* Held until here: b_rtp_session belongs to b_session, which could
+		 * otherwise be destroyed while we read and write it. */
+		switch_core_session_rwunlock(b_session);
 	}
 
 }

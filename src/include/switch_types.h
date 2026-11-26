@@ -739,6 +739,13 @@ typedef struct {
 	uint32_t last_recv_lsr_local; /* RTT calculation, When receiving an SR we save our local timestamp in fraction of 65536 seconds */
 	uint32_t last_recv_lsr_peer;  /* RTT calculation, When receiving an SR we extract the middle 32bits of the remote NTP timestamp to include it in the next SR LSR */
 	uint32_t init;
+	/* Whole-session view of inter_jitter, in ms, for rtp_audio_in_rtcp_jitter_avg_ms
+	 * and _max_ms. inter_jitter is a moving average over about 16 packets and is
+	 * zeroed on an SSRC change; these are neither, so they cover every packet the
+	 * session received. Zero samples means RTCP stats were not computed. */
+	double   inter_jitter_sum_ms;
+	double   inter_jitter_max_ms;
+	uint32_t inter_jitter_samples;
 } switch_rtcp_numbers_t;
 
 typedef struct {
